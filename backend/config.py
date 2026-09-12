@@ -42,7 +42,7 @@ def _get_jwt_secret():
 
 JWT_SECRET = _get_jwt_secret()
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_HOURS = 8
+JWT_EXPIRY_HOURS = 720
 
 # ── CORS ───────────────────────────────────────────────────
 # Include "*" as fallback so the scanner works when accessed from any IP on the network

@@ -416,36 +416,26 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
 
         except Exception as e:
             err_str = str(e).lower()
+
             if "timeout" in err_str or "timed out" in err_str:
-                log_item["vulnerable"] = True
+                # A timeout by itself is NOT sufficient evidence of Blind SQLi.
+                # Network congestion, server load, WAF behavior, rate limiting,
+                # or an application-side timeout can all produce the same result.
+                # Keep the probe inconclusive and continue testing other payloads.
+                log_item["vulnerable"] = False
                 log_item["details"] = (
-                    f"REQUEST TIMED OUT (baseline {baseline_time:.2f}s) — "
-                    f"Possible Blind SQLi ({db_label})"
+                    f"REQUEST TIMED OUT after the probe timeout window "
+                    f"(baseline {baseline_time:.2f}s) — inconclusive; "
+                    f"timeout alone is not treated as Blind SQLi"
                 )
-                now = datetime.now(timezone.utc).isoformat()
-                finding = Finding(
-                    id=str(uuid.uuid4()),
-                    scan_id=scan_id,
-                    target_url=probe_url,
-                    timestamp=now,
-                    source_tool="active_probe",
-                    type="vulnerability",
-                    severity="high",
-                    title=f"Possible Time-Based Blind SQL Injection ({db_label}) ({method_str})",
-                    description=(
-                        f"Parameter '{param.param_name}' ({method_str}) caused a request timeout when injecting "
-                        f"a {db_label} sleep payload, suggesting time-based blind SQLi."
-                    ),
-                    owasp_category="A03:2021-Injection",
-                    cwe="CWE-89",
-                    evidence_location="response_time",
-                    evidence_snippet=f"Timeout on payload ({method_str}): {payload}",
-                    remediation="Use parameterized queries / prepared statements.",
+                logger.debug(
+                    f"[Blind SQLi] Timeout on {param.param_name} "
+                    f"({db_label}) — not counted as vulnerability"
                 )
-                break
-            else:
-                logger.debug(f"[Blind SQLi] Error on {param.param_name}: {e}")
-                log_item["details"] = f"Network error: {e}"
+                continue
+
+            logger.debug(f"[Blind SQLi] Error on {param.param_name}: {e}")
+            log_item["details"] = f"Network error: {e}"
 
     return finding, last_log
 
