@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.jwt_secret
+users.json
