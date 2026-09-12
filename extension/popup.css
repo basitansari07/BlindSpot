@@ -1,0 +1,259 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    width: 380px;
+    min-height: 500px;
+    background: #0b0f14;
+    color: #e8edf2;
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.container {
+    padding: 20px;
+}
+
+/* Header */
+
+.header {
+    margin-bottom: 25px;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.shield {
+    width: 42px;
+    height: 42px;
+    border: 1px solid #3b82f6;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #60a5fa;
+    font-size: 22px;
+    background: #111827;
+}
+
+h1 {
+    font-size: 21px;
+    letter-spacing: 0.5px;
+}
+
+.logo p {
+    margin-top: 3px;
+    font-size: 11px;
+    color: #8b98a8;
+}
+
+/* Main */
+
+label {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    color: #aeb9c6;
+    margin-bottom: 8px;
+}
+
+.url-box {
+    width: 100%;
+}
+
+input {
+    width: 100%;
+    height: 43px;
+    padding: 0 13px;
+    border: 1px solid #273241;
+    border-radius: 8px;
+    background: #111720;
+    color: #e8edf2;
+    outline: none;
+    font-size: 13px;
+    transition: border 0.2s;
+}
+
+input:focus {
+    border-color: #3b82f6;
+}
+
+input::placeholder {
+    color: #64748b;
+}
+
+/* Scan button */
+
+#scanBtn {
+    width: 100%;
+    height: 43px;
+    margin-top: 14px;
+    border: none;
+    border-radius: 8px;
+    background: #2563eb;
+    color: white;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+#scanBtn:hover {
+    background: #1d4ed8;
+}
+
+#scanBtn:disabled {
+    background: #1e3a6d;
+    cursor: not-allowed;
+}
+
+/* Spinner */
+
+.spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+}
+
+.hidden {
+    display: none !important;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Status */
+
+.status-box {
+    margin-top: 18px;
+    padding: 14px;
+    border: 1px solid #202b38;
+    border-radius: 9px;
+    background: #0f151d;
+}
+
+.status-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #64748b;
+}
+
+.status-box p {
+    margin-top: 7px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #7f8b99;
+}
+
+/* Results */
+
+.results {
+    margin-top: 18px;
+    padding: 15px;
+    border: 1px solid #263241;
+    border-radius: 9px;
+    background: #0f151d;
+}
+
+.result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
+.result-header h2 {
+    font-size: 14px;
+}
+
+#resultStatus {
+    font-size: 10px;
+    color: #60a5fa;
+    background: #13233d;
+    padding: 4px 7px;
+    border-radius: 5px;
+}
+
+/* Statistics */
+
+.stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.stat {
+    padding: 11px 5px;
+    text-align: center;
+    border: 1px solid #202b38;
+    border-radius: 7px;
+    background: #111720;
+}
+
+.stat-number {
+    display: block;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.stat-label {
+    display: block;
+    margin-top: 4px;
+    font-size: 9px;
+    color: #7f8b99;
+    text-transform: uppercase;
+}
+
+/* Report */
+
+.report-btn {
+    width: 100%;
+    height: 40px;
+    margin-top: 13px;
+    border: 1px solid #334155;
+    border-radius: 7px;
+    background: #151d27;
+    color: #dbe5ef;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.report-btn:hover {
+    background: #1c2734;
+}
+
+/* Footer */
+
+footer {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 28px;
+    padding-top: 12px;
+    border-top: 1px solid #1c2530;
+    font-size: 9px;
+    color: #586575;
+}

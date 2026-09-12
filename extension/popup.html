@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BlindSpot</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+
+    <div class="container">
+
+        <header class="header">
+            <div class="logo">
+                <div class="shield">◈</div>
+                <div>
+                    <h1>BlindSpot</h1>
+                    <p>Web Security Scanner</p>
+                </div>
+            </div>
+        </header>
+
+        <main>
+
+            <label for="targetUrl">Target URL</label>
+
+            <div class="url-box">
+                <input
+                    type="url"
+                    id="targetUrl"
+                    placeholder="https://example.com"
+                    autocomplete="off"
+                >
+            </div>
+
+            <button id="scanBtn">
+                <span id="scanText">START SCAN</span>
+                <span id="spinner" class="spinner hidden"></span>
+            </button>
+
+            <div id="statusBox" class="status-box">
+                <div class="status-title">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Ready to scan</span>
+                </div>
+                <p id="statusDetail">
+                    Enter a target URL and start a security assessment.
+                </p>
+            </div>
+
+            <div id="results" class="results hidden">
+
+                <div class="result-header">
+                    <h2>Scan Results</h2>
+                    <span id="resultStatus">Completed</span>
+                </div>
+
+                <div class="stats">
+
+                    <div class="stat">
+                        <span class="stat-number" id="findingCount">0</span>
+                        <span class="stat-label">Findings</span>
+                    </div>
+
+                    <div class="stat">
+                        <span class="stat-number" id="criticalCount">0</span>
+                        <span class="stat-label">Critical</span>
+                    </div>
+
+                    <div class="stat">
+                        <span class="stat-number" id="highCount">0</span>
+                        <span class="stat-label">High</span>
+                    </div>
+
+                </div>
+
+                <button id="reportBtn" class="report-btn">
+                    Download AI Security Report
+                </button>
+
+            </div>
+
+        </main>
+
+        <footer>
+            <span>BlindSpot</span>
+            <span>Passive-first security assessment</span>
+        </footer>
+
+    </div>
+
+    <script src="popup.js"></script>
+
+</body>
+</html>
