@@ -1,98 +1,133 @@
-import { useEffect, useMemo, useState } from "react";
-
+import React, { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000/api";
+const API_BASE = "http://127.0.0.1:8000/api";
 
-const severityOrder = ["critical", "high", "medium", "low", "info"];
+const severityOrder = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4,
+  informational: 4,
+};
+
+const severityClass = (severity = "info") =>
+  String(severity).toLowerCase();
+
+const sortFindings = (items = []) =>
+  [...items].sort((a, b) => {
+    const sa = severityOrder[severityClass(a.severity)] ?? 99;
+    const sb = severityOrder[severityClass(b.severity)] ?? 99;
+
+    if (sa !== sb) return sa - sb;
+
+    return String(a.title || "").localeCompare(
+      String(b.title || "")
+    );
+  });
 
 function App() {
   const [token, setToken] = useState(
     () => localStorage.getItem("blindspot_token") || ""
   );
-  const [user, setUser] = useState(
-    () => localStorage.getItem("blindspot_user") || "admin"
-  );
-  const [page, setPage] = useState("dashboard");
-  const [loading, setLoading] = useState(false);
+
+  const [user, setUser] = useState(() => {
+    try {
+      return JSON.parse(
+        localStorage.getItem("blindspot_user") || "null"
+      );
+    } catch {
+      return null;
+    }
+  });
+
+  const [page, setPage] = useState("overview");
+
+  const [loading, setLoading] = useState(true);
+  const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState("");
+
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [stats, setStats] = useState(null);
+
+  const [stats, setStats] = useState({});
   const [scans, setScans] = useState([]);
   const [rules, setRules] = useState([]);
+
   const [selectedScan, setSelectedScan] = useState(null);
   const [report, setReport] = useState(null);
+
   const [findingFilter, setFindingFilter] = useState("all");
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
   const [scanForm, setScanForm] = useState({
-    target: "",
-    deep_scan: true,
+    url: "https://www.example.com",
+    deep_scan: false,
     security_headers: true,
-    tls: true,
-    scan_mode: "passive",
-    rate_limit: "",
-    session_cookies: "",
+    tls_analysis: true,
+    scan_mode: "full_active",
     custom_headers: "",
-    authorized: false,
   });
+
   const [scanProgress, setScanProgress] = useState(null);
   const [toast, setToast] = useState("");
 
-  const isAuthenticated = Boolean(token);
+  /* =====================================================
+     API
+     ===================================================== */
 
-  const api = async (path, options = {}) => {
+  async function api(path, options = {}) {
     const headers = {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     };
 
-    const response = await fetch(`${API_BASE}${path}`, {
+    if (token) {
+      headers.Authorization = "Bearer " + token;
+    }
+
+    if (options.body && !headers["Content-Type"]) {
+      headers["Content-Type"] = "application/json";
+    }
+
+    const response = await fetch(API_BASE + path, {
       ...options,
       headers,
     });
 
-    let data = {};
+    let data = null;
 
     try {
       data = await response.json();
     } catch {
-      data = {};
+      data = null;
     }
 
     if (!response.ok) {
-      throw new Error(
-        data.detail ||
-          data.message ||
-          data.error ||
-          `Request failed (${response.status})`
-      );
+      const message =
+        data?.detail ||
+        data?.message ||
+        "Request failed (" + response.status + ")";
+
+      throw new Error(message);
     }
 
     return data;
-  };
+  }
 
-  const showToast = (message) => {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 3000);
-  };
+  /* =====================================================
+     AUTH
+     ===================================================== */
 
-  const login = async (event) => {
-    event.preventDefault();
+  async function login(event) {
+    event?.preventDefault();
+
     setLoginError("");
-
-    const username = event.currentTarget.username.value.trim();
-    const password = event.currentTarget.password.value;
-
-    if (!username || !password) {
-      setLoginError("Enter username and password.");
-      return;
-    }
-
-    setLoading(true);
+    setLoginLoading(true);
 
     try {
-      const data = await fetch(`${API_BASE}/auth/login`, {
+      const result = await fetch(API_BASE + "/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -103,1875 +138,2497 @@ function App() {
         }),
       });
 
-      const result = await data.json();
+      const data = await result.json();
 
-      if (!data.ok) {
+      if (!result.ok) {
         throw new Error(
-          result.detail || result.message || "Invalid credentials"
+          data?.detail ||
+            data?.message ||
+            "Invalid username or password"
         );
       }
 
-      const jwt = result.token || result.access_token;
+      const newToken =
+        data.token || data.access_token;
 
-      if (!jwt) {
-        throw new Error("Login succeeded but no token was returned.");
+      if (!newToken) {
+        throw new Error(
+          "Authentication token was not returned."
+        );
       }
 
-      localStorage.setItem("blindspot_token", jwt);
+      const loggedUser = data.user || {
+        username,
+        role: "admin",
+      };
+
       localStorage.setItem(
-        "blindspot_user",
-        result.username || username
+        "blindspot_token",
+        newToken
       );
 
-      setToken(jwt);
-      setUser(result.username || username);
-      setPage("dashboard");
-      showToast("Signed in successfully.");
+      localStorage.setItem(
+        "blindspot_user",
+        JSON.stringify(loggedUser)
+      );
+
+      setToken(newToken);
+      setUser(loggedUser);
+      setPage("overview");
+      setPassword("");
     } catch (error) {
       setLoginError(error.message);
     } finally {
-      setLoading(false);
+      setLoginLoading(false);
     }
-  };
+  }
 
-  const logout = async () => {
+  async function logout() {
     try {
       if (token) {
-        await api("/auth/logout", { method: "POST" });
+        await api("/auth/logout", {
+          method: "POST",
+        });
       }
     } catch {
-      // Local logout should still happen if backend logout is unavailable.
+      // Continue logout even if backend logout fails.
     }
 
     localStorage.removeItem("blindspot_token");
     localStorage.removeItem("blindspot_user");
 
     setToken("");
-    setUser("admin");
-    setStats(null);
+    setUser(null);
+    setStats({});
     setScans([]);
     setRules([]);
     setSelectedScan(null);
     setReport(null);
-  };
+  }
 
-  const loadDashboard = async () => {
-    try {
-      const data = await api("/stats");
-      setStats(data);
-    } catch {
-      setStats(null);
-    }
+  /* =====================================================
+     DASHBOARD DATA
+     ===================================================== */
+
+  async function loadDashboard() {
+    if (!token) return;
 
     try {
-      const data = await api("/scans");
-      setScans(data.scans || data || []);
-    } catch {
-      setScans([]);
-    }
-  };
+      const [statsData, scansData] =
+        await Promise.all([
+          api("/stats"),
+          api("/scans"),
+        ]);
 
-  const loadScans = async () => {
-    try {
-      const data = await api("/scans");
-      setScans(data.scans || data || []);
+      setStats(statsData || {});
+
+      const scanList =
+        scansData?.scans ||
+        scansData?.items ||
+        (Array.isArray(scansData)
+          ? scansData
+          : []);
+
+      setScans(scanList);
     } catch (error) {
-      showToast(error.message);
+      console.error(
+        "Dashboard load failed:",
+        error
+      );
     }
-  };
+  }
 
-  const loadRules = async () => {
+  async function loadScans() {
+    if (!token) return;
+
+    try {
+      const data = await api("/scans");
+
+      const scanList =
+        data?.scans ||
+        data?.items ||
+        (Array.isArray(data)
+          ? data
+          : []);
+
+      setScans(scanList);
+    } catch (error) {
+      console.error(
+        "Scans load failed:",
+        error
+      );
+    }
+  }
+
+  async function loadRules() {
+    if (!token) return;
+
     try {
       const data = await api("/rules");
-      setRules(data.rules || data || []);
-    } catch (error) {
-      showToast(error.message);
-    }
-  };
 
-  const reloadRules = async () => {
+      const ruleList =
+        data?.rules ||
+        data?.items ||
+        (Array.isArray(data)
+          ? data
+          : []);
+
+      setRules(ruleList);
+    } catch (error) {
+      console.error(
+        "Rules load failed:",
+        error
+      );
+    }
+  }
+
+  async function reloadRules() {
     try {
-      const data = await api("/rules/reload", {
+      await api("/rules/reload", {
         method: "POST",
       });
 
       showToast(
-        data.message || `Rules reloaded: ${data.rules_loaded || "OK"}`
+        "Detection rules reloaded."
       );
 
       await loadRules();
+      await loadDashboard();
     } catch (error) {
       showToast(error.message);
     }
-  };
+  }
+
+  /* =====================================================
+     EFFECTS
+     ===================================================== */
 
   useEffect(() => {
-    if (!token) return;
-    loadDashboard();
+    if (!token) {
+      setLoading(false);
+      return;
+    }
+
+    async function initialLoad() {
+      setLoading(true);
+
+      await Promise.all([
+        loadDashboard(),
+        page === "rules"
+          ? loadRules()
+          : Promise.resolve(),
+      ]);
+
+      setLoading(false);
+    }
+
+    initialLoad();
   }, [token]);
 
   useEffect(() => {
     if (!token) return;
 
-    if (page === "scans") loadScans();
-    if (page === "rules") loadRules();
-  }, [page, token]);
+    if (
+      page === "overview" ||
+      page === "scans"
+    ) {
+      loadDashboard();
+    }
 
-  const startScan = async (event) => {
-    event.preventDefault();
+    if (page === "rules") {
+      loadRules();
+    }
+  }, [page]);
 
-    if (!scanForm.target.trim()) {
+  /* =====================================================
+     TOAST
+     ===================================================== */
+
+  function showToast(message) {
+    setToast(message);
+
+    window.setTimeout(() => {
+      setToast("");
+    }, 3500);
+  }
+
+  /* =====================================================
+     START SCAN
+     ===================================================== */
+
+  async function startScan(event) {
+    event?.preventDefault();
+
+    const rawUrl =
+      scanForm.url.trim();
+
+    if (!rawUrl) {
       showToast("Enter a target URL.");
       return;
     }
 
-    if (!scanForm.authorized) {
-      showToast("Authorization confirmation is required.");
-      return;
+    let targetUrl = rawUrl;
+
+    if (
+      !/^https?:\/\//i.test(targetUrl)
+    ) {
+      targetUrl =
+        "https://" + targetUrl;
     }
 
-    setLoading(true);
+    let customHeaders = {};
 
-    setScanProgress({
-      status: "queued",
-      progress: 0,
-      scan_id: null,
-    });
+    if (
+      scanForm.custom_headers.trim()
+    ) {
+      try {
+        customHeaders = JSON.parse(
+          scanForm.custom_headers
+        );
+      } catch {
+        showToast(
+          "Custom headers must be valid JSON."
+        );
+        return;
+      }
+    }
 
     try {
-      let normalizedTarget = scanForm.target.trim();
-
-      if (!/^https?:\/\//i.test(normalizedTarget)) {
-        normalizedTarget = `https://${normalizedTarget}`;
-      }
-
-      let customHeaders = scanForm.custom_headers.trim();
-
-      try {
-        if (customHeaders) {
-          customHeaders = JSON.parse(customHeaders);
-        } else {
-          customHeaders = {};
-        }
-      } catch {
-        throw new Error("Custom headers must be valid JSON.");
-      }
-
-      /*
-       * IMPORTANT:
-       * Backend /api/scan expects the field "url".
-       * Previously the frontend sent "target", which caused
-       * the backend to return HTTP 400.
-       */
-
-      const body = {
-        url: normalizedTarget,
-        deep_scan: scanForm.deep_scan,
-        security_headers: scanForm.security_headers,
-        tls: scanForm.tls,
-        scan_mode: scanForm.scan_mode,
-        rate_limit: scanForm.rate_limit
-          ? Number(scanForm.rate_limit)
-          : undefined,
-        session_cookies:
-          scanForm.session_cookies.trim() || undefined,
-        auth_headers: customHeaders,
-        authorized: true,
-      };
-
-      const data = await api("/scan", {
-        method: "POST",
-        body: JSON.stringify(body),
+      setScanProgress({
+        percent: 5,
+        status: "Starting scan...",
+        scanId: null,
       });
 
-      const scanId = data.scan_id || data.id;
+      const result = await api("/scan", {
+        method: "POST",
+        body: JSON.stringify({
+          url: targetUrl,
+          authorized: true,
+          scan_mode:
+            scanForm.scan_mode,
+          deep_scan:
+            scanForm.deep_scan,
+          security_headers:
+            scanForm.security_headers,
+          tls_analysis:
+            scanForm.tls_analysis,
+          custom_headers:
+            customHeaders,
+        }),
+      });
+
+      const scanId =
+        result?.scan_id ||
+        result?.id ||
+        result?.scan?.id;
 
       if (!scanId) {
-        throw new Error("Backend did not return a scan ID.");
+        throw new Error(
+          "Backend did not return a scan ID."
+        );
       }
 
       setScanProgress({
-        status: "running",
-        progress: 5,
-        scan_id: scanId,
+        percent: 10,
+        status: "Scan running...",
+        scanId,
       });
 
-      showToast("Scan started.");
-      pollScan(scanId);
+      await pollScan(scanId);
     } catch (error) {
       setScanProgress(null);
       showToast(error.message);
-    } finally {
-      setLoading(false);
     }
-  };
+  }
 
-  const pollScan = async (scanId) => {
-    let finished = false;
+  async function pollScan(scanId) {
+    const startedAt = Date.now();
 
-    while (!finished) {
+    while (true) {
       try {
-        const data = await api(`/scan/${scanId}`);
-        const scan = data.scan || data;
+        const status =
+          await api("/scan/" + scanId);
 
-        const progress = Number(scan.progress ?? 0);
-        const status = String(
-          scan.status || "running"
-        ).toLowerCase();
+        const currentStatus =
+          String(
+            status?.status ||
+              status?.scan_status ||
+              ""
+          ).toLowerCase();
+
+        const progressValue =
+          Number(
+            status?.progress ??
+              status?.percentage ??
+              0
+          );
+
+        const elapsed =
+          Date.now() - startedAt;
+
+        let calculatedProgress =
+          progressValue;
+
+        if (!calculatedProgress) {
+          calculatedProgress =
+            Math.min(
+              95,
+              15 + elapsed / 1000
+            );
+        }
 
         setScanProgress({
-          status,
-          progress,
-          scan_id: scanId,
-          scan,
+          percent: Math.round(
+            Math.min(
+              99,
+              calculatedProgress
+            )
+          ),
+          status:
+            status?.message ||
+            (currentStatus ===
+            "completed"
+              ? "Scan completed."
+              : currentStatus ===
+                "failed"
+              ? "Scan failed."
+              : "Scanning target..."),
+          scanId,
         });
 
         if (
-          [
-            "completed",
-            "complete",
-            "finished",
-            "failed",
-            "error",
-          ].includes(status)
+          currentStatus ===
+            "completed" ||
+          currentStatus ===
+            "complete" ||
+          status?.completed === true
         ) {
-          finished = true;
+          setScanProgress({
+            percent: 100,
+            status: "Scan completed.",
+            scanId,
+          });
 
-          if (
-            ["completed", "complete", "finished"].includes(status)
-          ) {
-            showToast("Scan completed.");
-            await loadDashboard();
-            await openScan(scanId);
-          } else {
-            showToast(`Scan ${status}.`);
-          }
+          await loadDashboard();
+          await openScan(scanId);
 
-          break;
+          window.setTimeout(() => {
+            setScanProgress(null);
+          }, 800);
+
+          return;
         }
+
+        if (
+          currentStatus ===
+            "failed" ||
+          currentStatus === "error"
+        ) {
+          throw new Error(
+            status?.error ||
+              status?.message ||
+              "Scan failed."
+          );
+        }
+
+        await new Promise(
+          (resolve) =>
+            setTimeout(resolve, 1500)
+        );
       } catch (error) {
-        showToast(error.message);
-        finished = true;
-        break;
+        throw error;
+      }
+    }
+  }
+
+  /* =====================================================
+     OPEN SCAN / REPORT
+     ===================================================== */
+
+  async function openScan(scanId) {
+    try {
+      const [
+        reportData,
+        scanData,
+      ] = await Promise.all([
+        api(
+          "/scan/" +
+            scanId +
+            "/report"
+        ),
+        api("/scan/" + scanId),
+      ]);
+
+      const mergedReport = {
+        ...(reportData || {}),
+      };
+
+      if (
+        Array.isArray(
+          scanData?.active_probes_log
+        )
+      ) {
+        mergedReport.active_probes_log =
+          scanData.active_probes_log;
+      } else if (
+        Array.isArray(
+          reportData?.active_probes_log
+        )
+      ) {
+        mergedReport.active_probes_log =
+          reportData.active_probes_log;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
-  };
+      if (
+        !Array.isArray(
+          mergedReport.findings
+        ) &&
+        Array.isArray(
+          scanData?.findings
+        )
+      ) {
+        mergedReport.findings =
+          scanData.findings;
+      }
 
-  const openScan = async (scanId) => {
-    try {
-      const data = await api(`/scan/${scanId}/report`);
+      setSelectedScan({
+        ...(scanData || {}),
+        id:
+          scanData?.id ||
+          scanData?.scan_id ||
+          scanId,
+      });
 
-      setReport(data.report || data);
-      setSelectedScan(scanId);
+      setReport(mergedReport);
       setPage("report");
+      setFindingFilter("all");
     } catch (error) {
       showToast(error.message);
     }
-  };
+  }
 
-  const deleteScan = async (scanId) => {
-    const confirmed = window.confirm(
-      "Delete this scan and its stored report?"
-    );
-
-    if (!confirmed) return;
+  async function deleteScan(scanId) {
+    if (!scanId) return;
 
     try {
-      await api(`/scan/${scanId}`, {
-        method: "DELETE",
-      });
+      await api(
+        "/scan/" + scanId,
+        {
+          method: "DELETE",
+        }
+      );
 
       showToast("Scan deleted.");
 
-      await loadScans();
+      setSelectedScan(null);
+      setReport(null);
+
       await loadDashboard();
     } catch (error) {
       showToast(error.message);
     }
-  };
+  }
 
-  const exportReport = async (format) => {
-    if (!selectedScan) return;
-
+  async function exportReport(scanId) {
     try {
-      const response = await fetch(
-        `${API_BASE}/scan/${selectedScan}/export?format=${encodeURIComponent(
-          format
-        )}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const response =
+        await fetch(
+          API_BASE +
+            "/scan/" +
+            scanId +
+            "/export",
+          {
+            headers: {
+              Authorization:
+                "Bearer " + token,
+            },
+          }
+        );
 
       if (!response.ok) {
-        throw new Error(`Export failed (${response.status})`);
+        throw new Error(
+          "Export failed (" +
+            response.status +
+            ")"
+        );
       }
 
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition");
+      const blob =
+        await response.blob();
 
-      let filename = `blindspot-report.${format}`;
+      const url =
+        window.URL.createObjectURL(
+          blob
+        );
 
-      if (disposition) {
-        const match = disposition.match(/filename="?([^"]+)"?/i);
+      const link =
+        document.createElement("a");
 
-        if (match?.[1]) {
-          filename = match[1];
-        }
-      }
+      link.href = url;
 
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
+      link.download =
+        "blindspot-" +
+        scanId +
+        ".json";
 
-      anchor.href = url;
-      anchor.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
 
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      window.URL.revokeObjectURL(url);
 
-      URL.revokeObjectURL(url);
-
-      showToast("Report exported.");
+      showToast(
+        "Report exported."
+      );
     } catch (error) {
       showToast(error.message);
     }
-  };
+  }
 
-  const downloadAIReport = async () => {
-    if (!selectedScan) return;
-
+  async function downloadAIReport(
+    scanId
+  ) {
     try {
-      const response = await fetch(
-        `${API_BASE}/scan/${selectedScan}/ai-report`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        }
-      );
+      const response =
+        await fetch(
+          API_BASE +
+            "/scan/" +
+            scanId +
+            "/ai-report",
+          {
+            headers: {
+              Authorization:
+                "Bearer " + token,
+            },
+          }
+        );
 
       if (!response.ok) {
-        throw new Error(`AI report failed (${response.status})`);
+        throw new Error(
+          "AI report failed (" +
+            response.status +
+            ")"
+        );
       }
 
-      const blob = await response.blob();
-      const disposition = response.headers.get("Content-Disposition");
+      const blob =
+        await response.blob();
 
-      let filename = `blindspot-ai-security-report-${selectedScan}.pdf`;
+      const url =
+        window.URL.createObjectURL(
+          blob
+        );
 
-      if (disposition) {
-        const match = disposition.match(/filename="?([^"]+)"?/i);
+      const link =
+        document.createElement("a");
 
-        if (match?.[1]) {
-          filename = match[1];
-        }
-      }
+      link.href = url;
 
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
+      link.download =
+        "blindspot-ai-report-" +
+        scanId +
+        ".pdf";
 
-      anchor.href = url;
-      anchor.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
 
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      window.URL.revokeObjectURL(url);
 
-      URL.revokeObjectURL(url);
-
-      showToast("AI security report downloaded.");
+      showToast(
+        "AI PDF downloaded."
+      );
     } catch (error) {
       showToast(error.message);
     }
-  };
+  }
+
+  /* =====================================================
+     FINDINGS
+     ===================================================== */
 
   const findings = useMemo(() => {
+    const raw =
+      report?.findings ||
+      report?.results ||
+      [];
+
     const list =
-      report?.findings ||
-      report?.results?.findings ||
-      selectedScan?.findings ||
-      [];
+      Array.isArray(raw)
+        ? raw
+        : [];
 
-    if (!Array.isArray(list)) return [];
+    const normalized =
+      list.map((item) => ({
+        ...item,
+        severity:
+          item?.severity ||
+          item?.risk ||
+          "info",
+      }));
 
-    if (findingFilter === "all") return list;
-
-    return list.filter(
-      (finding) =>
-        String(finding.severity || "").toLowerCase() ===
-        findingFilter
+    return sortFindings(
+      normalized
     );
-  }, [report, selectedScan, findingFilter]);
-
-  const severityCounts = useMemo(() => {
-    const counts = {
-      critical: 0,
-      high: 0,
-      medium: 0,
-      low: 0,
-      info: 0,
-    };
-
-    const allFindings =
-      report?.findings ||
-      report?.results?.findings ||
-      [];
-
-    if (Array.isArray(allFindings)) {
-      allFindings.forEach((finding) => {
-        const severity = String(
-          finding.severity || "info"
-        ).toLowerCase();
-
-        if (counts[severity] !== undefined) {
-          counts[severity] += 1;
-        }
-      });
-    }
-
-    return counts;
   }, [report]);
 
-  const riskScore =
-    Number(
+  const filteredFindings =
+    useMemo(() => {
+      if (
+        findingFilter === "all"
+      ) {
+        return findings;
+      }
+
+      return findings.filter(
+        (finding) =>
+          severityClass(
+            finding.severity
+          ) === findingFilter
+      );
+    }, [
+      findings,
+      findingFilter,
+    ]);
+
+  const severityCounts =
+    useMemo(() => {
+      const counts = {
+        critical: 0,
+        high: 0,
+        medium: 0,
+        low: 0,
+        info: 0,
+      };
+
+      findings.forEach(
+        (finding) => {
+          const severity =
+            severityClass(
+              finding.severity
+            );
+
+          if (
+            severity ===
+            "informational"
+          ) {
+            counts.info++;
+          } else if (
+            Object.prototype.hasOwnProperty.call(
+              counts,
+              severity
+            )
+          ) {
+            counts[severity]++;
+          } else {
+            counts.info++;
+          }
+        }
+      );
+
+      return counts;
+    }, [findings]);
+
+  const riskScore = useMemo(() => {
+    const possible =
       report?.risk_score ??
-        report?.risk?.score ??
-        report?.summary?.risk_score ??
-        selectedScan?.risk_score ??
-        0
-    ) || 0;
+      report?.risk ??
+      report?.score ??
+      selectedScan?.risk_score ??
+      selectedScan?.risk ??
+      0;
+
+    const number =
+      Number(possible);
+
+    return Number.isFinite(number)
+      ? Math.max(
+          0,
+          Math.min(100, number)
+        )
+      : 0;
+  }, [
+    report,
+    selectedScan,
+  ]);
 
   const riskGrade =
-    report?.risk_grade ||
-    report?.grade ||
-    report?.risk?.grade ||
-    selectedScan?.risk_grade ||
-    getRiskGrade(riskScore);
+    useMemo(
+      () => getRiskGrade(riskScore),
+      [riskScore]
+    );
 
-  if (!isAuthenticated) {
+  /* =====================================================
+     LOGIN
+     ===================================================== */
+
+  if (!token) {
     return (
-      <div className="login-shell">
-        <div className="login-glow glow-one" />
-        <div className="login-glow glow-two" />
+      <div className="login-page">
+        <div className="login-container">
+          <div className="login-showcase">
+            <div className="login-logo">
+        <span>BlindSpot</span>
+</div>
 
-        <div className="login-panel">
-          <div className="login-card">
-            <div className="login-brand">
-              <div className="brand-mark">
-                <svg
-                  viewBox="0 0 32 32"
-                  xmlns="http://www.w3.org/2000/svg"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M16 3L27 7.5V14C27 21.2 22.8 26.5 16 29C9.2 26.5 5 21.2 5 14V7.5L16 3Z"
-                    fill="#22D3EE"
-                    clipPath="inset(0 50% 0 0)"
-                  />
+<div className="login-tagline">
+  Website Vulnerability Scanner
+</div>
 
-                  <path
-                    d="M16 3L27 7.5V14C27 21.2 22.8 26.5 16 29C9.2 26.5 5 21.2 5 14V7.5L16 3Z"
-                    fill="none"
-                    stroke="#22D3EE"
-                    strokeWidth="3.5"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              </div>
+            <h1>
+              Stay ahead of every vulnerability.
+            </h1>
 
-              <div>
-                <div className="brand-name">BlindSpot</div>
-                <div className="brand-subtitle">
-                  Website Vulnerability Scanner
-                </div>
-              </div>
+            <p>
+              A complete security assessment platform that maps attack surfaces, uncovers vulnerabilities, and delivers reports with clear remediation steps.
+            </p>
+
+            <div className="login-features">
+              
             </div>
+          </div>
 
-            <div className="login-heading">
-              <p>
-                Sign in to scan any website and get a detailed security report.
+          <div className="login-form-container">
+            <form
+              className="login-form"
+              onSubmit={login}
+            >
+              <h2>
+                Welcome back
+              </h2>
+
+              <p className="login-form-subtitle">
+                Enter your details to sign in.
               </p>
-            </div>
-
-            <form className="login-form" onSubmit={login}>
-              <label className="login-field">
-                Username
-
-                <div className="input-with-icon">
-                  <svg
-                    className="field-icon"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <circle cx="12" cy="8" r="4" />
-                    <path d="M4 21C4.8 16.8 7.5 14.5 12 14.5C16.5 14.5 19.2 16.8 20 21" />
-                  </svg>
-
-                  <input
-                    name="username"
-                    type="text"
-                    placeholder="Enter username"
-                    autoComplete="username"
-                  />
-                </div>
-              </label>
-
-              <label className="login-field">
-                Password
-
-                <div className="input-with-icon">
-                  <svg
-                    className="field-icon"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <rect
-                      x="4"
-                      y="10"
-                      width="16"
-                      height="11"
-                      rx="2"
-                    />
-                    <path d="M8 10V7C8 4.8 9.8 3 12 3C14.2 3 16 4.8 16 7V10" />
-                  </svg>
-
-                  <input
-                    name="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter password"
-                    autoComplete="current-password"
-                  />
-
-                  <button
-                    type="button"
-                    className="password-toggle"
-                    onClick={() =>
-                      setShowPassword((current) => !current)
-                    }
-                    aria-label={
-                      showPassword
-                        ? "Hide password"
-                        : "Show password"
-                    }
-                  >
-                    {showPassword ? (
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M3 3L21 21" />
-                        <path d="M10.6 10.6C10.2 11 10 11.5 10 12C10 13.1 10.9 14 12 14C12.5 14 13 13.8 13.4 13.4" />
-                        <path d="M9.9 4.3C10.6 4.1 11.3 4 12 4C17.2 4 20.5 8 21 12C20.8 13.7 20.1 15.2 19 16.5" />
-                        <path d="M6.2 6.2C4.4 7.5 3.3 9.3 3 12C3.5 16 6.8 20 12 20C13.7 20 15.2 19.6 16.5 18.8" />
-                      </svg>
-                    ) : (
-                      <svg
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M2.5 12C3.8 7.7 7.4 5 12 5C16.6 5 20.2 7.7 21.5 12C20.2 16.3 16.6 19 12 19C7.4 19 3.8 16.3 2.5 12Z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              </label>
 
               {loginError && (
-                <div className="form-error">
-                  <span>!</span>
+                <div className="login-error">
                   {loginError}
                 </div>
               )}
 
-              <button
-                className="primary-button login-button"
-                disabled={loading}
-              >
-                {loading ? "Signing in..." : "Sign in"}
-              </button>
-            </form>
-          </div>
-        </div>
+              <div className="login-form-group">
+                <label>
+                  Username
+                </label>
 
-        <div className="login-showcase">
-          <div className="showcase-grid" />
-
-          <div className="showcase-content">
-            <span className="showcase-kicker">
-              WEB SECURITY PLATFORM
-            </span>
-
-            <h2 className="showcase-title">
-              See Your Security Gaps.
-              <span>Fix Them Before Attackers Do.</span>
-            </h2>
-
-            <p className="showcase-copy">
-              Discover what’s exposed, identify security weaknesses, and turn findings into clear insights.
-            </p>
-
-            <div className="showcase-visual">
-              <div className="showcase-ring ring-one" />
-              <div className="showcase-ring ring-two" />
-
-              <div className="showcase-shield">
-                <svg
-                  viewBox="0 0 32 32"
-                  xmlns="http://www.w3.org/2000/svg"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M16 3L27 7.5V14C27 21.2 22.8 26.5 16 29C9.2 26.5 5 21.2 5 14V7.5L16 3Z"
-                    fill="#22D3EE"
-                    clipPath="inset(0 50% 0 0)"
-                  />
-
-                  <path
-                    d="M16 3L27 7.5V14C27 21.2 22.8 26.5 16 29C9.2 26.5 5 21.2 5 14V7.5L16 3Z"
-                    fill="none"
-                    stroke="#22D3EE"
-                    strokeWidth="3.5"
-                    strokeLinejoin="round"
-                  />
-                </svg>
+                <input
+                  className="login-input"
+                  value={username}
+                  onChange={(event) =>
+                    setUsername(
+                      event.target.value
+                    )
+                  }
+                  autoComplete="username"
+                  required
+                />
               </div>
 
-              <div className="scan-beam" />
-            </div>
+              <div className="login-form-group">
+                <label>
+                  Password
+                </label>
+
+                <div className="login-input-wrapper">
+                  <input
+                    className="login-input"
+                    type={
+                      showPassword
+                        ? "text"
+                        : "password"
+                    }
+                    value={password}
+                    onChange={(event) =>
+                      setPassword(
+                        event.target.value
+                      )
+                    }
+                    autoComplete="current-password"
+                    required
+                  />
+
+                  <button
+                    type="button"
+                    className="login-password-toggle"
+                    onClick={() =>
+                      setShowPassword(
+                        !showPassword
+                      )
+                    }
+                  >
+                    {showPassword
+                      ? "Hide"
+                      : "Show"}
+                  </button>
+                </div>
+              </div>
+
+              <button
+                className="login-button"
+                type="submit"
+                disabled={loginLoading}
+              >
+                {loginLoading
+                  ? "Signing in..."
+                  : "Sign in"}
+              </button>
+            </form>
           </div>
         </div>
       </div>
     );
   }
 
+  /* =====================================================
+     LOADING
+     ===================================================== */
+
+  if (loading) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-spinner" />
+      </div>
+    );
+  }
+
+  /* =====================================================
+     APP SHELL
+     ===================================================== */
+
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <div>
-          <div className="sidebar-brand">
-  <div className="brand-mark small">
-    <svg
-      viewBox="0 0 32 32"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <path
-        d="M16 3L27 7.5V14C27 21.2 22.8 26.5 16 29C9.2 26.5 5 21.2 5 14V7.5L16 3Z"
-        fill="#22D3EE"
-        clipPath="inset(0 50% 0 0)"
-      />
-      <path
-        d="M16 3L27 7.5V14C27 21.2 22.8 26.5 16 29C9.2 26.5 5 21.2 5 14V7.5L16 3Z"
-        fill="none"
-        stroke="#22D3EE"
-        strokeWidth="3.5"
-        strokeLinejoin="round"
-      />
-    </svg>
-  </div>
-
-  <div>
-    <div className="brand-name">BlindSpot</div>
-    <div className="brand-subtitle">
-      Website Vulnerability Scanner
-    </div>
-  </div>
-</div>
-
-          <div className="sidebar-section-label">
-            WORKSPACE
-          </div>
-
-          <nav className="sidebar-nav">
-            <NavButton
-              active={page === "dashboard"}
-              onClick={() => setPage("dashboard")}
-              icon="⌂"
-              label="Overview"
-            />
-
-            <NavButton
-              active={page === "new-scan"}
-              onClick={() => setPage("new-scan")}
-              icon="+"
-              label="New Scan"
-            />
-
-            <NavButton
-              active={page === "scans"}
-              onClick={() => setPage("scans")}
-              icon="◫"
-              label="Scan History"
-            />
-
-            <NavButton
-              active={page === "rules"}
-              onClick={() => setPage("rules")}
-              icon="◇"
-              label="Detection Rules"
-            />
-          </nav>
-
-          <div className="sidebar-section-label second">
-            ANALYSIS
-          </div>
-
-          <nav className="sidebar-nav">
-            <NavButton
-              active={page === "report"}
-              onClick={() =>
-                selectedScan && setPage("report")
-              }
-              disabled={!selectedScan}
-              icon="▤"
-              label="Report"
-            />
-          </nav>
-        </div>
-
-        <div className="sidebar-bottom">
-          <div className="backend-status">
-            <span className="status-dot" />
-
-            <div>
-              <strong>API Online</strong>
-              <span>127.0.0.1:8000</span>
-            </div>
-          </div>
-
-          <div className="user-box">
-            <div className="avatar">
-              {user.charAt(0).toUpperCase()}
-            </div>
-
-            <div className="user-details">
-              <strong>{user}</strong>
-              <span>Administrator</span>
-            </div>
-
-            <button
-              className="logout-button"
-              onClick={logout}
-            >
-              ↪
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <main className="main-content">
-        {page === "dashboard" && (
-          <Dashboard
-            stats={stats}
-            scans={scans}
-            onNewScan={() => setPage("new-scan")}
-            onOpenScan={openScan}
-            riskGrade={riskGrade}
-          />
-        )}
-
-        {page === "new-scan" && (
-          <NewScanPage
-            form={scanForm}
-            setForm={setScanForm}
-            onSubmit={startScan}
-            loading={loading}
-            progress={scanProgress}
-          />
-        )}
-
-        {page === "scans" && (
-          <ScansPage
-            scans={scans}
-            onOpen={openScan}
-            onDelete={deleteScan}
-            onRefresh={loadScans}
-          />
-        )}
-
-        {page === "rules" && (
-          <RulesPage
-            rules={rules}
-            onReload={reloadRules}
-            onRefresh={loadRules}
-          />
-        )}
-
-        {page === "report" && (
-          <ReportPage
-            report={report}
-            findings={findings}
-            findingFilter={findingFilter}
-            setFindingFilter={setFindingFilter}
-            severityCounts={severityCounts}
-            riskScore={riskScore}
-            riskGrade={riskGrade}
-            onExport={exportReport}
-            onAIReport={downloadAIReport}
-            scanId={selectedScan}
-          />
-        )}
-      </main>
-
-      {toast && <div className="toast">{toast}</div>}
-    </div>
-  );
-}
-
-function NavButton({
-  active,
-  onClick,
-  icon,
-  label,
-  disabled,
-}) {
-  return (
-    <button
-      className={`nav-button ${active ? "active" : ""}`}
-      onClick={onClick}
-      disabled={disabled}
-    >
-      <span className="nav-icon">{icon}</span>
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function Dashboard({
-  stats,
-  scans,
-  onNewScan,
-  onOpenScan,
-  riskGrade,
-}) {
-  const totalScans = stats?.total_scans ?? scans.length ?? 0;
-  const completed = stats?.completed_scans ?? 0;
-  const running = stats?.running_scans ?? 0;
-  const averageRisk = stats?.average_risk_score ?? 0;
-
-  return (
-    <div className="page">
-      <PageHeader
-        eyebrow="SECURITY OVERVIEW"
-        title="Overview"
-        description="Monitor your web security posture from one place."
-        action={
-          <button
-            className="primary-button"
-            onClick={onNewScan}
-          >
-            <span>+</span>
-            New scan
-          </button>
+      <Sidebar
+        page={page}
+        setPage={setPage}
+        user={user}
+        logout={logout}
+        showLogoutConfirm={
+          showLogoutConfirm
+        }
+        setShowLogoutConfirm={
+          setShowLogoutConfirm
         }
       />
 
-      <div className="hero-grid">
-        <div className="hero-card">
-          <div>
-            <span className="eyebrow">
-              SECURITY POSTURE
-            </span>
-
-            <h2>Know what attackers can see.</h2>
-
-            <p>
-              BlindSpot continuously maps exposed surfaces, security
-              headers, application behavior and vulnerability signals.
-            </p>
-          </div>
-
-          <div className="hero-line">
-            <span />
-            <span />
-            <span />
-            <span />
-            <span />
-          </div>
-
-          <div className="hero-meta">
-            <span>
-              <i className="status-dot" />
-              Scanner operational
-            </span>
-
-            <span>Passive-first detection</span>
-          </div>
-        </div>
-
-        <div className="posture-card">
-          <div className="card-topline">
-            <span className="eyebrow">AVG. RISK</span>
-
-            <span className={`risk-grade ${riskGrade}`}>
-              {riskGrade}
-            </span>
-          </div>
-
-          <div className="mini-risk">
-            <div
-              className="mini-risk-fill"
-              style={{
-                width: `${Math.min(
-                  Number(averageRisk) || 0,
-                  100
-                )}%`,
-              }}
+      <main className="main-content">
+        <div className="page-container">
+          {page === "overview" && (
+            <Dashboard
+              stats={stats}
+              scans={scans}
+              openScan={openScan}
+              setPage={setPage}
             />
-          </div>
-
-          <div className="posture-score">
-            <strong>{averageRisk}</strong>
-            <span>/100</span>
-          </div>
-
-          <p>
-            Average risk score across completed scans
-          </p>
-        </div>
-      </div>
-
-      <div className="metrics-grid">
-        <MetricCard
-          label="Total scans"
-          value={totalScans}
-          icon="◫"
-          accent="blue"
-        />
-
-        <MetricCard
-          label="Completed"
-          value={completed}
-          icon="✓"
-          accent="green"
-        />
-
-        <MetricCard
-          label="Running"
-          value={running}
-          icon="◌"
-          accent="orange"
-        />
-
-        <MetricCard
-          label="Detection rules"
-          value="1163"
-          icon="◇"
-          accent="purple"
-        />
-      </div>
-
-      <div className="section-card">
-        <div className="section-header">
-          <div>
-            <span className="eyebrow">ACTIVITY</span>
-            <h3>Recent scans</h3>
-          </div>
-
-          <button
-            className="ghost-button"
-            onClick={() =>
-              window.scrollTo({
-                top: 0,
-                behavior: "smooth",
-              })
-            }
-          >
-            View overview
-          </button>
-        </div>
-
-        <ScanTable
-          scans={scans.slice(0, 6)}
-          onOpen={onOpenScan}
-          compact
-        />
-      </div>
-    </div>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  icon,
-  accent,
-}) {
-  return (
-    <div className="metric-card">
-      <div className={`metric-icon ${accent}`}>
-        {icon}
-      </div>
-
-      <div>
-        <span>{label}</span>
-        <strong>{value}</strong>
-      </div>
-    </div>
-  );
-}
-
-function NewScanPage({
-  form,
-  setForm,
-  onSubmit,
-  loading,
-  progress,
-}) {
-  const update = (key, value) => {
-    setForm((current) => ({
-      ...current,
-      [key]: value,
-    }));
-  };
-
-  return (
-    <div className="page narrow-page">
-      <PageHeader
-        eyebrow="ATTACK SURFACE"
-        title="New scan"
-        description="Run a controlled security assessment against an authorized target."
-      />
-
-      <form className="scan-form" onSubmit={onSubmit}>
-        <div className="form-card">
-          <div className="form-card-heading">
-            <div>
-              <span className="eyebrow">TARGET</span>
-              <h3>Scan configuration</h3>
-            </div>
-
-            <span className="secure-label">
-              AUTHORIZED ONLY
-            </span>
-          </div>
-
-          <label className="large-label">
-            Target URL
-
-            <input
-              value={form.target}
-              onChange={(event) =>
-                update("target", event.target.value)
-              }
-              placeholder="https://example.com"
-            />
-          </label>
-
-          <div className="scan-options">
-            <OptionToggle
-              checked={form.deep_scan}
-              onChange={(value) =>
-                update("deep_scan", value)
-              }
-              title="Deep scan"
-              description="Discover common paths and deeper application surfaces."
-            />
-
-            <OptionToggle
-              checked={form.security_headers}
-              onChange={(value) =>
-                update("security_headers", value)
-              }
-              title="Security headers"
-              description="Inspect HTTP security headers and policy configuration."
-            />
-
-            <OptionToggle
-              checked={form.tls}
-              onChange={(value) =>
-                update("tls", value)
-              }
-              title="TLS analysis"
-              description="Inspect TLS configuration and certificate signals."
-            />
-          </div>
-        </div>
-
-        <div className="form-card">
-          <div className="form-card-heading">
-            <div>
-              <span className="eyebrow">
-                SCAN MODE
-              </span>
-
-              <h3>Detection intensity</h3>
-            </div>
-          </div>
-
-          <div className="mode-grid">
-            {[
-              [
-                "passive",
-                "Passive",
-                "Low impact. Analyze responses, headers, cookies and discovered surfaces.",
-              ],
-              [
-                "light_active",
-                "Light active",
-                "Adds controlled active checks with limited request intensity.",
-              ],
-              [
-                "full_active",
-                "Full active",
-                "Broader active probing. Use only with explicit authorization.",
-              ],
-            ].map(([value, title, description]) => (
-              <button
-                type="button"
-                key={value}
-                className={`mode-card ${
-                  form.scan_mode === value
-                    ? "selected"
-                    : ""
-                }`}
-                onClick={() =>
-                  update("scan_mode", value)
-                }
-              >
-                <span className="mode-radio">
-                  {form.scan_mode === value
-                    ? "●"
-                    : "○"}
-                </span>
-
-                <strong>{title}</strong>
-                <p>{description}</p>
-              </button>
-            ))}
-          </div>
-
-          {form.scan_mode !== "passive" && (
-            <div className="warning-box">
-              <span>!</span>
-              Active scanning can generate additional requests. Only scan
-              systems you own or have explicit permission to test.
-            </div>
           )}
-        </div>
 
-        <div className="form-card">
-          <div className="form-card-heading">
-            <div>
-              <span className="eyebrow">
-                ADVANCED
-              </span>
-
-              <h3>Optional controls</h3>
-            </div>
-          </div>
-
-          <div className="two-column">
-            <label>
-              Rate limit
-
-              <input
-                value={form.rate_limit}
-                onChange={(event) =>
-                  update(
-                    "rate_limit",
-                    event.target.value
-                  )
-                }
-                placeholder="Requests / second"
-                type="number"
-                min="0"
-              />
-            </label>
-
-            <label>
-              Session cookies
-
-              <input
-                value={form.session_cookies}
-                onChange={(event) =>
-                  update(
-                    "session_cookies",
-                    event.target.value
-                  )
-                }
-                placeholder="name=value; name2=value2"
-              />
-            </label>
-          </div>
-
-          <label>
-            Custom headers
-
-            <textarea
-              value={form.custom_headers}
-              onChange={(event) =>
-                update(
-                  "custom_headers",
-                  event.target.value
-                )
+          {page === "new-scan" && (
+            <NewScanPage
+              scanForm={scanForm}
+              setScanForm={
+                setScanForm
               }
-              placeholder={'{"X-Custom-Header":"value"}'}
-              rows="4"
-            />
-          </label>
-        </div>
-
-        <div className="authorization-box">
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={form.authorized}
-              onChange={(event) =>
-                update(
-                  "authorized",
-                  event.target.checked
-                )
+              startScan={startScan}
+              scanProgress={
+                scanProgress
               }
             />
+          )}
 
-            <span className="custom-checkbox" />
-
-            <span>
-              <strong>
-                I confirm that I am authorized to scan this target.
-              </strong>
-
-              <small>
-                BlindSpot should only be used against systems you own or
-                have explicit permission to assess.
-              </small>
-            </span>
-          </label>
-        </div>
-
-        <button
-          type="submit"
-          className="primary-button scan-submit"
-          disabled={loading}
-        >
-          {loading
-            ? "Starting scan..."
-            : "Start security scan"}
-
-          {!loading && <span>→</span>}
-        </button>
-      </form>
-
-      {progress && (
-        <div className="progress-card">
-          <div className="progress-heading">
-            <div>
-              <span className="eyebrow">
-                LIVE SCAN
-              </span>
-
-              <h3>{progress.status}</h3>
-            </div>
-
-            <strong>
-              {Math.round(progress.progress)}%
-            </strong>
-          </div>
-
-          <div className="progress-track">
-            <div
-              className="progress-fill"
-              style={{
-                width: `${progress.progress}%`,
-              }}
+          {page === "scans" && (
+            <ScansPage
+              scans={scans}
+              openScan={openScan}
+              deleteScan={deleteScan}
             />
-          </div>
+          )}
 
-          <div className="progress-meta">
-            <span>Scan ID</span>
+          {page === "rules" && (
+            <RulesPage
+              rules={rules}
+              reloadRules={
+                reloadRules
+              }
+            />
+          )}
 
-            <code>
-              {progress.scan_id || "Preparing..."}
-            </code>
-          </div>
+          {page === "report" &&
+            report && (
+              <ReportPage
+                report={report}
+                selectedScan={
+                  selectedScan
+                }
+                findings={
+                  filteredFindings
+                }
+                allFindings={findings}
+                severityCounts={
+                  severityCounts
+                }
+                findingFilter={
+                  findingFilter
+                }
+                setFindingFilter={
+                  setFindingFilter
+                }
+                riskScore={riskScore}
+                riskGrade={riskGrade}
+                exportReport={
+                  exportReport
+                }
+                downloadAIReport={
+                  downloadAIReport
+                }
+                deleteScan={
+                  deleteScan
+                }
+                setPage={setPage}
+              />
+            )}
+        </div>
+      </main>
+
+      {toast && (
+        <div className="toast">
+          {toast}
         </div>
       )}
     </div>
   );
 }
 
+/* =========================================================
+   SIDEBAR
+   ========================================================= */
+
+function Sidebar({
+  page,
+  setPage,
+  user,
+  logout,
+  showLogoutConfirm,
+  setShowLogoutConfirm,
+}) {
+  const items = [
+    {
+      id: "overview",
+      label: "Overview",
+    },
+    {
+      id: "new-scan",
+      label: "New Scan",
+    },
+    {
+      id: "scans",
+      label: "Scan History",
+    },
+    {
+      id: "rules",
+      label: "Detection Rules",
+    },
+    {
+      id: "report",
+      label: "Report",
+    },
+  ];
+
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-logo">
+        <span>
+          BlindSpot
+        </span>
+      </div>
+
+      <nav className="sidebar-nav">
+        {items.map((item) => (
+          <button
+            key={item.id}
+            className={`sidebar-item ${
+              page === item.id
+                ? "active"
+                : ""
+            }`}
+            onClick={() => {
+              if (
+                item.id ===
+                  "report" &&
+                page !== "report"
+              ) {
+                return;
+              }
+
+              setPage(item.id);
+            }}
+            disabled={
+              item.id === "report" &&
+              page !== "report"
+            }
+          >
+            <span>
+              {item.icon}
+            </span>
+
+            <span>
+              {item.label}
+            </span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="sidebar-spacer" />
+
+      <div className="sidebar-status">
+        <div className="sidebar-status-title">
+          System Online
+        </div>
+
+        <div className="sidebar-status-text">
+          BlindSpot is ready to scan
+        </div>
+      </div>
+
+      <div className="sidebar-user">
+        <div className="sidebar-avatar">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <circle cx="12" cy="7" r="4"></circle>
+            <path d="M6 21v-2a6 6 0 0 1 12 0v2"></path>
+          </svg>
+        </div>
+
+        <div>
+          <div className="sidebar-user-name">
+            {user?.username ||
+              user?.name ||
+              "Admin"}
+          </div>
+
+          <div className="sidebar-user-role">
+            Administrator
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="sidebar-logout-btn"
+          onClick={() => {
+            setShowLogoutConfirm(
+              true
+            );
+          }}
+          title="Logout"
+        >
+          ↪
+        </button>
+      </div>
+
+      {showLogoutConfirm && (
+        <div
+          className="logout-overlay"
+          onClick={() =>
+            setShowLogoutConfirm(
+              false
+            )
+          }
+        >
+          <div
+            className="logout-popup"
+            onClick={(event) =>
+              event.stopPropagation()
+            }
+          >
+            <div className="logout-popup-title">
+              Sign out?
+            </div>
+
+            <div className="logout-popup-text">
+            </div>
+
+            <div className="logout-popup-actions">
+              <button
+                type="button"
+                className="logout-cancel"
+                onClick={() =>
+                  setShowLogoutConfirm(
+                    false
+                  )
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                className="logout-confirm"
+                onClick={() => {
+                  setShowLogoutConfirm(
+                    false
+                  );
+                  logout();
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+
+/* =========================================================
+   DASHBOARD
+   ========================================================= */
+
+function Dashboard({
+  stats,
+  scans,
+  openScan,
+  setPage,
+}) {
+  const totalScans =
+    Number(
+      stats?.total_scans ??
+        stats?.scans_total ??
+        scans.length
+    ) || 0;
+
+  const completedScans =
+    Number(
+      stats?.completed_scans ??
+        stats?.completed ??
+        scans.filter(
+          (scan) =>
+            String(
+              scan.status
+            ).toLowerCase() ===
+            "completed"
+        ).length
+    ) || 0;
+
+  const runningScans =
+    Number(
+      stats?.running_scans ??
+        stats?.running ??
+        scans.filter((scan) =>
+          [
+            "running",
+            "pending",
+            "scanning",
+          ].includes(
+            String(
+              scan.status
+            ).toLowerCase()
+          )
+        ).length
+    ) || 0;
+
+  const ruleCount =
+    Number(
+      stats?.rules_loaded ??
+        stats?.detection_rules ??
+        stats?.rules ??
+        0
+    ) || 0;
+
+  const averageRisk =
+    Number(
+      stats?.average_risk ??
+        stats?.avg_risk ??
+        stats?.risk_score ??
+        8
+    ) || 0;
+
+  const grade =
+    getRiskGrade(
+      averageRisk
+    );
+
+  return (
+    <>
+      <PageHeader
+       
+        title="Overview"
+        action={
+          <button
+            className="primary-button"
+            onClick={() =>
+              setPage(
+                "new-scan"
+              )
+            }
+          >
+            New scan
+          </button>
+        }
+      />
+
+      <section className="hero-grid">
+        <div className="hero-card">
+          <div className="hero-eyebrow">
+            SECURITY PLATFORM
+          </div>
+
+          <h2 className="hero-title">
+            Stay ahead of every{" "}
+            <span>
+             vulnerability.
+            </span>
+          </h2>
+
+          <p className="hero-description">
+            <p className="hero-description">
+  Continuous scanning across headers, endpoints, and known vulnerability signatures.
+</p>
+          </p>
+
+          <div className="hero-status">
+            <span className="status-dot" />
+            Scanner operational
+            &nbsp;.&nbsp;
+            Active & Passive detection
+          </div>
+        </div>
+
+        <div className="posture-card">
+          <div className="posture-label">
+            Average Risk
+          </div>
+
+          <div className="posture-value">
+            {Math.round(
+              averageRisk
+            )}
+          </div>
+
+          <div className="posture-score">
+            Security grade{" "}
+            <strong>
+              {grade}
+            </strong>
+          </div>
+
+          <div className="posture-bar">
+            <div
+              className="posture-bar-fill"
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.max(
+                    4,
+                    averageRisk
+                  )
+                )}%`,
+              }}
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="metrics-grid">
+        <MetricCard
+          label="Total scans"
+          value={totalScans}
+          subtitle="Assessments performed"
+        />
+
+        <MetricCard
+          label="Completed"
+          value={completedScans}
+          subtitle="Successfully finished"
+        />
+
+        <MetricCard
+          label="Running"
+          value={runningScans}
+          subtitle="Currently active"
+        />
+
+        <MetricCard
+          label="Detection rules"
+          value={
+            ruleCount || "—"
+          }
+          subtitle="Loaded security rules"
+        />
+      </section>
+
+      <section className="section-card">
+        <div className="section-card-header">
+          <div>
+           <div className="section-card-title">
+              Recent scans <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>- Latest security assessments</span>
+            </div>
+          </div>
+
+          <button
+            className="secondary-button"
+            onClick={() =>
+              setPage("scans")
+            }
+          >
+            View all
+          </button>
+        </div>
+
+        <ScanTable
+          scans={scans.slice(0, 8)}
+          openScan={openScan}
+        />
+      </section>
+    </>
+  );
+}
+
+/* =========================================================
+   METRIC CARD
+   ========================================================= */
+
+function MetricCard({
+  label,
+  value,
+  subtitle,
+}) {
+  return (
+    <div className="metric-card">
+      <div className="metric-label">
+        {label}
+      </div>
+
+      <div className="metric-value">
+        {value}
+      </div>
+
+      <div className="metric-subtitle">
+        {subtitle}
+      </div>
+    </div>
+  );
+}
+
+/* =========================================================
+   NEW SCAN PAGE
+   ========================================================= */
+
+function NewScanPage({
+  scanForm,
+  setScanForm,
+  startScan,
+  scanProgress,
+}) {
+  function update(key, value) {
+    setScanForm(
+      (previous) => ({
+        ...previous,
+        [key]: value,
+      })
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="New scan"
+        description="Launch a security scan on an authorized target."
+      />
+
+      <form
+        className="scan-form"
+        onSubmit={startScan}
+      >
+        <div className="form-card">
+          <div className="form-card-header">
+            <div className="form-card-title">
+              Target configuration
+            </div>
+
+            <div className="form-card-description">
+              Provide the URL of the
+              authorized application you
+              want BlindSpot to assess.
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">
+              Target URL
+            </label>
+
+            <input
+              className="form-input"
+              value={scanForm.url}
+              onChange={(event) =>
+                update(
+                  "url",
+                  event.target.value
+                )
+              }
+              placeholder="https://example.com"
+            />
+          </div>
+
+          <div className="authorization-box">
+            <div>
+              <div className="authorization-box-title">
+                 Authorized target
+              </div>
+
+              <div className="authorization-box-text">
+                Only scan systems you own
+                or have explicit permission
+                to assess.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="form-card">
+          <div className="form-card-header">
+            <div className="form-card-title">
+              Scan options
+            </div>
+
+            <div className="form-card-description">
+              Choose which analysis layers
+              should run.
+            </div>
+          </div>
+
+          <div className="scan-options">
+            <OptionToggle
+              title="Deep scan"
+              active={
+                scanForm.deep_scan
+              }
+              onClick={() =>
+                update(
+                  "deep_scan",
+                  !scanForm.deep_scan
+                )
+              }
+            />
+
+            <OptionToggle
+              title="Security headers"
+              active={
+                scanForm.security_headers
+              }
+              onClick={() =>
+                update(
+                  "security_headers",
+                  !scanForm.security_headers
+                )
+              }
+            />
+
+            <OptionToggle
+              title="TLS analysis"
+              active={
+                scanForm.tls_analysis
+              }
+              onClick={() =>
+                update(
+                  "tls_analysis",
+                  !scanForm.tls_analysis
+                )
+              }
+            />
+          </div>
+        </div>
+
+        <div className="form-card">
+          <div className="form-card-header">
+            <div className="form-card-title">
+              Detection intensity
+            </div>
+
+            <div className="form-card-description">
+              Choose how deeply BlindSpot should analyze the target, from passive analysis to full active validation.
+            </div>
+          </div>
+
+          <div className="mode-grid">
+            <ModeCard
+              title="Passive"
+              description="Analyze responses without sending active validation probes."
+              selected={
+                scanForm.scan_mode ===
+                "passive"
+              }
+              onClick={() =>
+                update(
+                  "scan_mode",
+                  "passive"
+                )
+              }
+              badge="LOW IMPACT"
+            />
+
+            <ModeCard
+              title="Light active"
+              description="Run a limited set of controlled validation probes.."
+              selected={
+                scanForm.scan_mode ===
+                "light_active"
+              }
+              onClick={() =>
+                update(
+                  "scan_mode",
+                  "light_active"
+                )
+              }
+              badge="CONTROLLED"
+            />
+
+            <ModeCard
+              title="Full active"
+              description="Run the complete supported set of active validation probes."
+              selected={
+                scanForm.scan_mode ===
+                "full_active"
+              }
+              onClick={() =>
+                update(
+                  "scan_mode",
+                  "full_active"
+                )
+              }
+              badge="MAX COVERAGE"
+            />
+          </div>
+        </div>
+
+        <div className="form-card">
+          <div className="form-card-header">
+            <div className="form-card-title">
+              Optional request headers
+            </div>
+
+            <div className="form-card-description">
+              Supply JSON headers when the
+              authorized target requires them.
+            </div>
+          </div>
+
+          <textarea
+            className="form-textarea"
+            value={
+              scanForm.custom_headers
+            }
+            onChange={(event) =>
+              update(
+                "custom_headers",
+                event.target.value
+              )
+            }
+            placeholder='{"Authorization":"Bearer ..."}'
+          />
+        </div>
+
+        <div className="warning-box">
+          Active scanning generates
+          requests against the target.
+          Use it only with explicit
+          authorization.
+        </div>
+
+        {scanProgress && (
+          <div className="progress-card">
+            <div className="progress-header">
+              <div className="progress-title">
+                Scan progress
+              </div>
+
+              <div className="progress-value">
+                {
+                  scanProgress.percent
+                }
+                %
+              </div>
+            </div>
+
+            <div className="progress-track">
+              <div
+                className="progress-fill"
+                style={{
+                  width: `${scanProgress.percent}%`,
+                }}
+              />
+            </div>
+
+            <div className="form-card-description">
+              {
+                scanProgress.status
+              }
+            </div>
+          </div>
+        )}
+
+        <div>
+          <button
+            className="primary-button"
+            type="submit"
+            disabled={Boolean(
+              scanProgress
+            )}
+          >
+            {scanProgress
+              ? "Scanning..."
+              : "Start security scan"}
+          </button>
+        </div>
+      </form>
+    </>
+  );
+}
+
+/* =========================================================
+   OPTION TOGGLE
+   ========================================================= */
+
 function OptionToggle({
-  checked,
-  onChange,
   title,
   description,
+  active,
+  onClick,
 }) {
   return (
     <button
       type="button"
       className={`option-toggle ${
-        checked ? "checked" : ""
+        active ? "active" : ""
       }`}
-      onClick={() => onChange(!checked)}
+      onClick={onClick}
     >
-      <span className="toggle">
-        <span />
-      </span>
+      <div>
+        <div className="option-title">
+          {title}
+        </div>
 
-      <span>
-        <strong>{title}</strong>
-        <small>{description}</small>
-      </span>
+        <div className="option-description">
+          {description}
+        </div>
+      </div>
+
+      <div
+        className={`toggle ${
+          active ? "active" : ""
+        }`}
+      />
     </button>
   );
 }
 
-function ScansPage({
-  scans,
-  onOpen,
-  onDelete,
-  onRefresh,
+/* =========================================================
+   MODE CARD
+   ========================================================= */
+
+function ModeCard({
+  title,
+  description,
+  selected,
+  onClick,
+  badge,
 }) {
   return (
-    <div className="page">
-      <PageHeader
-        eyebrow="HISTORY"
-        title="Scan history"
-        description="Review previously completed and running security assessments."
-        action={
-          <button
-            className="ghost-button"
-            onClick={onRefresh}
-          >
-            ↻ Refresh
-          </button>
-        }
-      />
-
-      <div className="section-card">
-        <ScanTable
-          scans={scans}
-          onOpen={onOpen}
-          onDelete={onDelete}
-        />
+    <button
+      type="button"
+      className={`mode-card ${
+        selected ? "selected" : ""
+      }`}
+      onClick={onClick}
+    >
+      <div className="mode-card-title">
+        {title}
       </div>
-    </div>
+
+      <div className="mode-card-description">
+        {description}
+      </div>
+
+      <div className="mode-card-badge">
+        {badge}
+      </div>
+    </button>
   );
 }
 
-function ScanTable({
+/* =========================================================
+   SCANS PAGE
+   ========================================================= */
+
+function ScansPage({
   scans,
-  onOpen,
-  onDelete,
-  compact = false,
+  openScan,
+  deleteScan,
+}) {
+  return (
+    <>
+      <PageHeader
+        title="Scan history"
+        description="View your past scans and their results."
+      />
+
+      <section className="section-card scan-history-card">
+        <div className="section-card-header">
+          <div>
+            <div className="section-card-title">
+  Recent scans <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>- Latest security assessments</span>
+</div>
+
+            <div className="section-card-subtitle">
+              {scans.length} recorded
+              assessment
+              {scans.length === 1
+                ? ""
+                : "s"}
+            </div>
+          </div>
+        </div>
+
+        <ScanTable
+          scans={scans}
+          openScan={openScan}
+          deleteScan={deleteScan}
+        />
+      </section>
+    </>
+  );
+}
+
+/* =========================================================
+   SCAN TABLE
+   ========================================================= */
+
+function ScanTable({
+  scans = [],
+  openScan,
+  deleteScan,
 }) {
   if (!scans.length) {
     return (
       <div className="empty-state">
-        <div className="empty-icon">◫</div>
+        <div className="empty-state-title">
+          No scans yet
+        </div>
 
-        <h3>No scans yet</h3>
-
-        <p>
-          Start your first BlindSpot security assessment.
-        </p>
+        <div className="empty-state-text">
+          Start your first security
+          assessment to see results here.
+        </div>
       </div>
     );
   }
 
+  const formatDuration = (seconds) => {
+    if (!seconds && seconds !== 0) return "—";
+
+    const totalSeconds = Math.round(Number(seconds));
+    const hrs = Math.floor(totalSeconds / 3600);
+    const mins = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+
+    if (hrs > 0) {
+      return `${hrs}h ${mins}m ${secs}s`;
+    }
+    if (mins > 0) {
+      return `${mins}m ${secs}s`;
+    }
+    return `${secs}s`;
+  };
+
   return (
-    <div className="table-wrap">
-      <table className="scan-table">
-        <thead>
-          <tr>
-            <th>Target</th>
-            <th>Status</th>
-            <th>Risk</th>
-            <th>Findings</th>
-            <th>Date</th>
+    <table className="scan-table">
+      <thead>
+        <tr>
+          <th>Target</th>
+          <th>Status</th>
+          <th>Risk</th>
+          <th>Findings</th>
+          <th>Date</th>
+          <th>Duration</th>
 
-            {!compact && <th />}
-          </tr>
-        </thead>
+          {deleteScan && (
+            <th />
+          )}
+        </tr>
+      </thead>
 
-        <tbody>
-          {scans.map((scan) => {
-            const id = scan.scan_id || scan.id;
+      <tbody>
+        {scans.map(
+          (scan, index) => {
+            const scanId =
+              scan?.id ||
+              scan?.scan_id ||
+              scan?.uuid;
+
+            const target =
+              scan?.url ||
+              scan?.target_url ||
+              scan?.target ||
+              scan?.targetUrl ||
+              "Unknown target";
+
+            const status =
+              scan?.status ||
+              scan?.scan_status ||
+              "unknown";
+
             const risk =
-              scan.risk_score ??
-              scan.risk ??
-              "—";
+              scan?.risk_score ??
+              scan?.risk ??
+              scan?.score ??
+              0;
 
             const findings =
-              scan.findings_count ??
-              scan.total_findings ??
-              scan.findings?.length ??
-              "—";
+              scan?.findings_count ??
+              scan?.finding_count ??
+              scan?.findings ??
+              0;
+
+            const findingCount =
+              Array.isArray(findings)
+                ? findings.length
+                : findings;
+
+            let durationSeconds =
+              scan?.duration_seconds ??
+              scan?.duration ??
+              null;
+
+            if (
+              durationSeconds == null &&
+              scan?.started_at &&
+              scan?.completed_at
+            ) {
+              durationSeconds =
+                (new Date(scan.completed_at) -
+                  new Date(scan.started_at)) /
+                1000;
+            }
 
             return (
-              <tr key={id}>
+              <tr
+                key={
+                  scanId ||
+                  `${target}-${index}`
+                }
+              >
                 <td>
                   <button
                     className="target-button"
-                    onClick={() => onOpen(id)}
+                    onClick={() =>
+                      scanId &&
+                      openScan(scanId)
+                    }
                   >
-                    <span className="target-icon">
-                      ↗
-                    </span>
+                    {target}
 
-                    <span>
-                      <strong>
-                        {scan.target ||
-                          scan.url ||
-                          "Unknown target"}
-                      </strong>
-
-                      <small>{id}</small>
+                    <span className="target-url">
+                      {scanId}
                     </span>
                   </button>
                 </td>
 
                 <td>
-                  <StatusBadge status={scan.status} />
+                  <StatusBadge
+                    status={status}
+                  />
                 </td>
 
                 <td>
-                  <strong className="table-risk">
-                    {risk}
-                  </strong>
+                  <span
+                    className={`risk-mini ${
+                      Number(risk) >= 70
+                        ? "risk-high"
+                        : Number(risk) >=
+                          35
+                        ? "risk-medium"
+                        : "risk-low"
+                    }`}
+                  >
+                    {Math.round(
+                      Number(risk) || 0
+                    )}
+                  </span>
                 </td>
 
-                <td>{findings}</td>
+                <td>
+                  {findingCount}
+                </td>
 
-                <td className="muted-cell">
+                <td>
                   {formatDate(
-                    scan.created_at ||
-                      scan.timestamp ||
-                      scan.date
+                    scan?.created_at ||
+                      scan?.timestamp ||
+                      scan?.started_at
                   )}
                 </td>
 
-                {!compact && (
-                  <td>
-                    <div className="table-actions">
-                      <button
-                        className="small-action"
-                        onClick={() => onOpen(id)}
-                      >
-                        View
-                      </button>
+                <td>
+                  <span className="scan-duration">
+                    {formatDuration(durationSeconds)}
+                  </span>
+                </td>
 
-                      {onDelete && (
-                        <button
-                          className="small-action danger"
-                          onClick={() => onDelete(id)}
-                        >
-                          Delete
-                        </button>
-                      )}
-                    </div>
+                {deleteScan && (
+                  <td>
+                    <button
+                      className="secondary-button danger-button"
+                      onClick={() =>
+                        scanId &&
+                        deleteScan(
+                          scanId
+                        )
+                      }
+                    >
+                      Delete
+                    </button>
                   </td>
                 )}
               </tr>
             );
-          })}
-        </tbody>
-      </table>
-    </div>
+          }
+        )}
+      </tbody>
+    </table>
   );
 }
 
-function StatusBadge({ status }) {
-  const normalized = String(
-    status || "unknown"
-  ).toLowerCase();
+/* =========================================================
+   STATUS BADGE
+   ========================================================= */
+
+function StatusBadge({
+  status,
+}) {
+  const normalized =
+    String(
+      status || "unknown"
+    ).toLowerCase();
+
+  let className = "pending";
+
+  if (
+    normalized.includes(
+      "complete"
+    )
+  ) {
+    className = "completed";
+  } else if (
+    normalized.includes(
+      "run"
+    ) ||
+    normalized.includes(
+      "scan"
+    )
+  ) {
+    className = "running";
+  } else if (
+    normalized.includes(
+      "fail"
+    ) ||
+    normalized.includes(
+      "error"
+    )
+  ) {
+    className = "failed";
+  }
 
   return (
-    <span className={`status-badge ${normalized}`}>
-      <span />
-      {normalized}
+    <span
+      className={`status-badge ${className}`}
+    >
+      {status}
     </span>
   );
 }
 
+/* =========================================================
+   RULES PAGE
+   ========================================================= */
+
 function RulesPage({
   rules,
-  onReload,
-  onRefresh,
+  reloadRules,
 }) {
-  return (
-    <div className="page">
-      <PageHeader
-        eyebrow="DETECTION ENGINE"
-        title="Detection rules"
-        description="Inspect the rule set powering BlindSpot's vulnerability detection."
-        action={
-          <div className="header-actions">
-            <button
-              className="ghost-button"
-              onClick={onRefresh}
-            >
-              ↻ Refresh
-            </button>
+  const [search, setSearch] =
+    useState("");
 
-            <button
-              className="primary-button"
-              onClick={onReload}
-            >
-              Reload rules
-            </button>
-          </div>
+  const filteredRules =
+    useMemo(() => {
+      const query =
+        search.trim().toLowerCase();
+
+      if (!query) return rules;
+
+      return rules.filter((rule) =>
+        JSON.stringify(rule)
+          .toLowerCase()
+          .includes(query)
+      );
+    }, [rules, search]);
+
+  return (
+    <>
+      <PageHeader
+        title="Detection rules"
+        description="Security rules BlindSpot uses to detect threats."
+        action={
+          <button
+            className="secondary-button"
+            onClick={reloadRules}
+          >
+            Reload rules
+          </button>
         }
       />
 
-      <div className="rule-summary">
-        <div>
-          <span className="eyebrow">
-            LOADED RULES
-          </span>
+      <div className="rules-toolbar">
+        <div className="rules-search-wrapper">
+  <input
+    className="rules-search"
+    placeholder="Search rules..."
+    value={search}
+    onChange={(event) =>
+      setSearch(
+        event.target.value
+      )
+    }
+  />
 
-          <strong>{rules.length || 1163}</strong>
-
-          <p>
-            Detection signatures currently available.
-          </p>
-        </div>
-
-        <div className="rule-engine-status">
-          <span className="status-dot" />
-          Rule engine ready
-        </div>
+  {search && (
+    <button
+      type="button"
+      className="rules-search-clear"
+      onClick={() => setSearch("")}
+    >
+      ×
+    </button>
+  )}
+</div>
       </div>
 
-      <div className="section-card">
-        {!rules.length ? (
+      <section className="section-card">
+        {!filteredRules.length ? (
           <div className="empty-state">
-            <div className="empty-icon">◇</div>
-
-            <h3>Rule details unavailable</h3>
-
-            <p>
-              The backend did not return individual rules. The scanner
-              reports 1163 loaded rules.
-            </p>
+            <div className="empty-state-title">
+              No rules found
+            </div>
           </div>
         ) : (
-          <div className="rules-grid">
-            {rules.slice(0, 120).map((rule, index) => (
-              <div
-                className="rule-card"
-                key={
-                  rule.id ||
-                  rule.rule_id ||
-                  index
-                }
-              >
-                <div className="rule-card-top">
-                  <span>
-                    {rule.id ||
-                      rule.rule_id ||
-                      `RULE-${index + 1}`}
-                  </span>
+          <table className="rules-table">
+            <thead>
+              <tr>
+                <th>Rule</th>
+                <th>ID</th>
+                <th>Severity</th>
+                <th>Source</th>
+                <th>OWASP</th>
+              </tr>
+            </thead>
 
-                  <span
-                    className={`severity-dot ${String(
-                      rule.severity || "info"
-                    ).toLowerCase()}`}
-                  />
-                </div>
+            <tbody>
+              {filteredRules
+                .slice(0, 500)
+                .map(
+                  (
+                    rule,
+                    index
+                  ) => (
+                    <tr
+                      key={
+                        rule?.id ||
+                        rule?.rule_id ||
+                        index
+                      }
+                    >
+                      <td>
+                        <div className="rule-name">
+                          {rule?.name ||
+                            rule?.title ||
+                            "Unnamed rule"}
+                        </div>
+                      </td>
 
-                <strong>
-                  {rule.name ||
-                    rule.title ||
-                    "Detection rule"}
-                </strong>
+                      <td>
+                        <span className="rule-id">
+                          {rule?.id ||
+                            rule?.rule_id ||
+                            "—"}
+                        </span>
+                      </td>
 
-                <p>
-                  {rule.description ||
-                    rule.category ||
-                    rule.owasp ||
-                    "BlindSpot detection signature"}
-                </p>
-              </div>
-            ))}
-          </div>
+                      <td>
+                        <span
+                          className={`finding-severity ${severityClass(
+                            rule?.severity
+                          )}`}
+                        >
+                          {rule?.severity ||
+                            "info"}
+                        </span>
+                      </td>
+
+                      <td>
+                        <span className="rule-source">
+                          {rule?.source ||
+                            rule?.source_tool ||
+                            "BlindSpot"}
+                        </span>
+                      </td>
+
+                      <td>
+                        {rule?.owasp_category ||
+                          rule?.owasp ||
+                          "—"}
+                      </td>
+                    </tr>
+                  )
+                )}
+            </tbody>
+          </table>
         )}
-      </div>
-    </div>
+      </section>
+    </>
   );
 }
+/* =========================================================
+   REPORT PAGE
+   ========================================================= */
 
 function ReportPage({
   report,
+  selectedScan,
   findings,
+  allFindings,
+  severityCounts,
   findingFilter,
   setFindingFilter,
-  severityCounts,
   riskScore,
   riskGrade,
-  onExport,
-  onAIReport,
-  scanId,
+  exportReport,
+  downloadAIReport,
+  deleteScan,
+  setPage,
 }) {
-  if (!report) {
-    return (
-      <div className="page">
-        <PageHeader
-          eyebrow="ANALYSIS"
-          title="Report"
-          description="Run a scan and open its report to see findings."
-        />
+  const scanId =
+    selectedScan?.id ||
+    selectedScan?.scan_id;
 
-        <div className="empty-state large">
-          <div className="empty-icon">▤</div>
-
-          <h3>No report selected</h3>
-
-          <p>
-            Select a completed scan from Scan History.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const totalFindings =
-    report.total_findings ??
-    report.summary?.total_findings ??
-    Object.values(severityCounts).reduce(
-      (a, b) => a + b,
-      0
-    );
-
-  const owasp =
-    report.owasp ??
-    report.owasp_coverage ??
-    report.summary?.owasp_coverage ??
-    {};
+  const target =
+    selectedScan?.url ||
+    selectedScan?.target_url ||
+    selectedScan?.target ||
+    report?.url ||
+    report?.target_url ||
+    "Unknown target";
 
   const activeProbes =
-    report.active_probes ??
-    report.active_probe_results ??
-    report.summary?.active_probes ??
-    [];
+    Array.isArray(
+      report?.active_probes_log
+    )
+      ? report.active_probes_log
+      : [];
 
   return (
-    <div className="page">
+    <>
       <PageHeader
         eyebrow="SECURITY REPORT"
-        title="Scan report"
-        description={
-          report.target ||
-          report.url ||
-          "Security assessment results"
-        }
+        title="Assessment report"
+        description={target}
         action={
-          <div className="header-actions">
+          <div className="report-actions">
             <button
-              className="ghost-button"
-              onClick={() => onExport("json")}
+              className="secondary-button"
+              onClick={() =>
+                setPage("scans")
+              }
             >
-              Export JSON
+              Back
             </button>
 
-            <button
-              className="ghost-button"
-              onClick={() => onExport("html")}
-            >
-              Export HTML
-            </button>
+            {scanId && (
+              <>
+                <button
+                  className="secondary-button"
+                  onClick={() =>
+                    exportReport(
+                      scanId
+                    )
+                  }
+                >
+                  Export
+                </button>
 
-            <button
-              className="primary-button"
-              onClick={onAIReport}
-            >
-              AI security report
-            </button>
+                <button
+                  className="primary-button report-download-button"
+                  onClick={() =>
+                    downloadAIReport(
+                      scanId
+                    )
+                  }
+                >
+                  AI PDF
+                </button>
+              </>
+            )}
           </div>
         }
       />
 
-      <div className="report-overview">
+      <section className="report-overview">
         <div className="risk-card">
           <div
             className="risk-ring"
-            style={ringStyle(riskScore)}
+            style={ringStyle(
+              riskScore
+            )}
           >
-            <div className="risk-ring-inner">
-              <strong>{riskScore}</strong>
-              <span>/100</span>
-            </div>
-          </div>
-
-          <div>
-            <span className="eyebrow">
-              OVERALL RISK
-            </span>
-
-            <h2>{riskGrade}</h2>
-
-            <p>
-              Risk score is calculated from finding severity and
-              security posture signals.
-            </p>
-          </div>
-        </div>
-
-        <div className="finding-metrics">
-          <FindingMetric
-            label="Critical"
-            value={severityCounts.critical}
-            severity="critical"
-          />
-
-          <FindingMetric
-            label="High"
-            value={severityCounts.high}
-            severity="high"
-          />
-
-          <FindingMetric
-            label="Medium"
-            value={severityCounts.medium}
-            severity="medium"
-          />
-
-          <FindingMetric
-            label="Low"
-            value={severityCounts.low}
-            severity="low"
-          />
-
-          <FindingMetric
-            label="Total"
-            value={totalFindings}
-            severity="info"
-          />
-        </div>
-      </div>
-
-      <div className="report-grid">
-        <div className="section-card">
-          <div className="section-header">
             <div>
-              <span className="eyebrow">
-                VULNERABILITIES
-              </span>
+              <div className="risk-score">
+                {Math.round(
+                  riskScore
+                )}
+              </div>
 
-              <h3>
-                Findings{" "}
-                <span>({findings.length})</span>
-              </h3>
+              <div className="risk-grade">
+                Grade{" "}
+                {riskGrade}
+              </div>
+
+              <div className="risk-caption">
+                Risk score
+              </div>
             </div>
+          </div>
+        </div>
 
-            <select
-              className="filter-select"
-              value={findingFilter}
-              onChange={(event) =>
-                setFindingFilter(
-                  event.target.value
-                )
-              }
-            >
-              <option value="all">
-                All severities
-              </option>
+        <div className="section-card">
+          <div className="section-card-header">
+            <div>
+              <div className="section-card-title">
+                Findings overview
+              </div>
 
-              <option value="critical">
-                Critical
-              </option>
-
-              <option value="high">
-                High
-              </option>
-
-              <option value="medium">
-                Medium
-              </option>
-
-              <option value="low">
-                Low
-              </option>
-
-              <option value="info">
-                Info
-              </option>
-            </select>
+              <div className="section-card-subtitle">
+                Evidence-backed security
+                signals
+              </div>
+            </div>
           </div>
 
-          <div className="findings-list">
-            {findings.length ? (
-              findings.map((finding, index) => (
-                <FindingRow
-                  finding={finding}
-                  key={finding.id || index}
-                />
-              ))
-            ) : (
-              <div className="empty-state compact">
-                <h3>
-                  No findings in this filter
-                </h3>
-              </div>
+          <div
+            className="finding-metrics"
+            style={{
+              padding: 18,
+            }}
+          >
+            <FindingMetric
+              label="Critical"
+              value={
+                severityCounts.critical
+              }
+              severity="critical"
+            />
+
+            <FindingMetric
+              label="High"
+              value={
+                severityCounts.high
+              }
+              severity="high"
+            />
+
+            <FindingMetric
+              label="Medium"
+              value={
+                severityCounts.medium
+              }
+              severity="medium"
+            />
+
+            <FindingMetric
+              label="Low / Info"
+              value={
+                severityCounts.low +
+                severityCounts.info
+              }
+              severity="low"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section className="section-card findings-section">
+        <div className="section-card-header">
+          <div>
+            <div className="section-card-title">
+              Security findings
+            </div>
+
+            <div className="section-card-subtitle">
+              {allFindings.length} validated
+              finding
+              {allFindings.length ===
+              1
+                ? ""
+                : "s"}
+            </div>
+          </div>
+
+          <div className="finding-filter">
+            {[
+              "all",
+              "critical",
+              "high",
+              "medium",
+              "low",
+              "info",
+            ].map(
+              (filter) => (
+                <button
+                  key={filter}
+                  className={`filter-button ${
+                    findingFilter ===
+                    filter
+                      ? "active"
+                      : ""
+                  }`}
+                  onClick={() =>
+                    setFindingFilter(
+                      filter
+                    )
+                  }
+                >
+                  {filter}
+                </button>
+              )
             )}
           </div>
         </div>
 
-        <div className="side-report">
-          <div className="section-card">
-            <div className="section-header">
-              <div>
-                <span className="eyebrow">
-                  OWASP
-                </span>
-
-                <h3>Coverage</h3>
-              </div>
+        {findings.length ? (
+          findings.map(
+            (
+              finding,
+              index
+            ) => (
+              <FindingRow
+                key={
+                  finding?.id ||
+                  `${finding?.title}-${index}`
+                }
+                finding={
+                  finding
+                }
+              />
+            )
+          )
+        ) : (
+          <div className="empty-state">
+            <div className="empty-state-title">
+              No findings in this filter
             </div>
-
-            <OwaspChart data={owasp} />
           </div>
+        )}
+      </section>
 
-          <div className="section-card">
-            <div className="section-header">
-              <div>
-                <span className="eyebrow">
-                  ACTIVE CHECKS
-                </span>
-
-                <h3>Probe results</h3>
-              </div>
+      <section
+        className="section-card"
+        style={{
+          marginTop: 18,
+        }}
+      >
+        <div className="section-card-header">
+          <div>
+            <div className="section-card-title">
+              OWASP coverage
             </div>
 
-            <ProbeList probes={activeProbes} />
+            <div className="section-card-subtitle">
+              Findings grouped by OWASP
+              category
+            </div>
           </div>
         </div>
-      </div>
 
-      <div className="report-footer-meta">
-        <span>Scan ID</span>
-        <code>{scanId}</code>
-      </div>
-    </div>
+        <OwaspChart
+          findings={
+            allFindings
+          }
+        />
+      </section>
+
+      <section
+        className="section-card"
+        style={{
+          marginTop: 18,
+        }}
+      >
+        <div className="section-card-header">
+          <div>
+            <div className="section-card-title">
+              Active probe execution
+            </div>
+
+            <div className="section-card-subtitle">
+              Actual probe → response
+              validation
+            </div>
+          </div>
+
+          <div className="rule-source">
+            {activeProbes.length} probes
+          </div>
+        </div>
+
+        <ProbeList
+          probes={
+            activeProbes
+          }
+        />
+      </section>
+
+      {scanId && (
+        <div
+          style={{
+            marginTop: 18,
+            display: "flex",
+            justifyContent:
+              "flex-end",
+          }}
+        >
+          <button
+            className="secondary-button danger-button"
+            onClick={async () => {
+              await deleteScan(
+                scanId
+              );
+              setPage("scans");
+            }}
+          >
+            Delete scan
+          </button>
+        </div>
+      )}
+    </>
   );
 }
+
+/* =========================================================
+   FINDING METRIC
+   ========================================================= */
 
 function FindingMetric({
   label,
@@ -1979,180 +2636,233 @@ function FindingMetric({
   severity,
 }) {
   return (
-    <div className={`finding-metric ${severity}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div
+      className={`finding-metric ${severity}`}
+    >
+      <div className="finding-metric-value">
+        {value}
+      </div>
+
+      <div className="finding-metric-label">
+        {label}
+      </div>
     </div>
   );
 }
 
-function FindingRow({ finding }) {
-  const severity = String(
-    finding.severity || "info"
-  ).toLowerCase();
+/* =========================================================
+   FINDING ROW
+   ========================================================= */
+
+function FindingRow({
+  finding,
+}) {
+  const [
+    expanded,
+    setExpanded,
+  ] = useState(false);
+
+  const severity =
+    severityClass(
+      finding?.severity
+    );
 
   return (
-    <details className="finding-row">
-      <summary>
-        <span className={`severity-pill ${severity}`}>
-          {severity}
-        </span>
+    <div className="finding-row">
+      <div className="finding-row-main">
+        <div
+          className={`finding-severity-bar ${severity}`}
+        />
 
-        <span className="finding-main">
-          <strong>
-            {finding.title ||
-              finding.name ||
-              finding.rule_name ||
-              "Security finding"}
-          </strong>
-
-          <small>
-            {finding.url ||
-              finding.endpoint ||
-              finding.path ||
-              finding.category ||
-              "Detected security issue"}
-          </small>
-        </span>
-
-        <span className="finding-arrow">
-          +
-        </span>
-      </summary>
-
-      <div className="finding-details">
-        {finding.description && (
-          <div>
-            <span>Description</span>
-            <p>{finding.description}</p>
+        <div>
+          <div className="finding-title">
+            {finding?.title ||
+              "Untitled finding"}
           </div>
-        )}
 
-        {finding.evidence && (
-          <div>
-            <span>Evidence</span>
-            <pre>
-              {String(finding.evidence)}
-            </pre>
+          <div className="finding-description">
+            {finding?.description ||
+              "No description provided."}
           </div>
-        )}
 
-        {finding.recommendation && (
-          <div>
-            <span>Recommendation</span>
-            <p>{finding.recommendation}</p>
+          <div className="finding-meta">
+            <span
+              className={`finding-severity ${severity}`}
+            >
+              {finding?.severity ||
+                "info"}
+            </span>
+
+            {finding?.owasp_category && (
+              <span className="finding-tag">
+                {
+                  finding.owasp_category
+                }
+              </span>
+            )}
+
+            {finding?.cwe && (
+              <span className="finding-tag">
+                {finding.cwe}
+              </span>
+            )}
+
+            {finding?.source_tool && (
+              <span className="finding-tag">
+                {
+                  finding.source_tool
+                }
+              </span>
+            )}
           </div>
-        )}
-
-        <div className="finding-tags">
-          {finding.owasp && (
-            <span>
-              OWASP: {finding.owasp}
-            </span>
-          )}
-
-          {finding.cve && (
-            <span>
-              CVE: {finding.cve}
-            </span>
-          )}
-
-          {finding.cvss != null && (
-            <span>
-              CVSS: {finding.cvss}
-            </span>
-          )}
         </div>
+
+        <button
+          className="secondary-button"
+          onClick={() =>
+            setExpanded(
+              !expanded
+            )
+          }
+        >
+          {expanded
+            ? "Hide"
+            : "Evidence"}
+        </button>
       </div>
-    </details>
+
+      {expanded && (
+        <div className="finding-details">
+          <div className="finding-details-card">
+            <div className="finding-details-title">
+              Evidence
+            </div>
+
+            <div className="finding-evidence">
+              {finding?.evidence_snippet ||
+                finding?.evidence ||
+                finding?.evidence_location ||
+                "No evidence snippet available."}
+            </div>
+
+            {finding?.remediation && (
+              <>
+                <div
+                  className="finding-details-title"
+                  style={{
+                    marginTop: 15,
+                  }}
+                >
+                  Remediation
+                </div>
+
+                <div className="finding-remediation">
+                  {
+                    finding.remediation
+                  }
+                </div>
+              </>
+            )}
+
+            {finding?.target_url && (
+              <>
+                <div
+                  className="finding-details-title"
+                  style={{
+                    marginTop: 15,
+                  }}
+                >
+                  Target
+                </div>
+
+                <div className="finding-evidence">
+                  {
+                    finding.target_url
+                  }
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-function OwaspChart({ data }) {
-  const entries = Object.entries(
-    data || {}
-  ).slice(0, 10);
+/* =========================================================
+   OWASP CHART
+   ========================================================= */
+
+function OwaspChart({
+  findings = [],
+}) {
+  const counts = {};
+
+  findings.forEach(
+    (finding) => {
+      const category =
+        finding?.owasp_category ||
+        "Uncategorized";
+
+      counts[category] =
+        (counts[category] ||
+          0) + 1;
+    }
+  );
+
+  const entries =
+    Object.entries(
+      counts
+    ).sort(
+      (a, b) =>
+        b[1] - a[1]
+    );
 
   if (!entries.length) {
     return (
-      <div className="mini-empty">
-        OWASP mapping data was not included in this report.
+      <div className="empty-state">
+        <div className="empty-state-title">
+          No OWASP data
+        </div>
       </div>
     );
   }
 
-  const max = Math.max(
-    ...entries.map(
-      ([, value]) => Number(value) || 0
-    ),
-    1
-  );
+  const max =
+    Math.max(
+      ...entries.map(
+        ([, value]) =>
+          value
+      )
+    );
 
   return (
     <div className="owasp-chart">
-      {entries.map(([name, value]) => (
-        <div
-          className="owasp-row"
-          key={name}
-        >
-          <span>{name}</span>
-
-          <div className="owasp-bar">
-            <div
-              style={{
-                width: `${
-                  ((Number(value) || 0) / max) *
-                  100
-                }%`,
-              }}
-            />
-          </div>
-
-          <strong>{value}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ProbeList({ probes }) {
-  if (!Array.isArray(probes) || !probes.length) {
-    return (
-      <div className="mini-empty">
-        No active probe results were recorded.
-      </div>
-    );
-  }
-
-  return (
-    <div className="probe-list">
-      {probes.slice(0, 12).map(
-        (probe, index) => (
+      {entries.map(
+        ([category, count]) => (
           <div
-            className="probe-row"
-            key={probe.name || index}
+            className="owasp-row"
+            key={category}
           >
-            <span className="probe-status">
-              {probe.success === false ||
-              probe.finding
-                ? "!"
-                : "✓"}
-            </span>
+            <div className="owasp-label">
+              {category}
+            </div>
 
-            <div>
-              <strong>
-                {probe.name ||
-                  probe.probe ||
-                  `Probe ${index + 1}`}
-              </strong>
+            <div className="owasp-bar">
+              <div
+                className="owasp-bar-fill"
+                style={{
+                  width: `${
+                    (count /
+                      max) *
+                    100
+                  }%`,
+                }}
+              />
+            </div>
 
-              <small>
-                {probe.message ||
-                  probe.status ||
-                  (probe.finding
-                    ? "Finding detected"
-                    : "No issue detected")}
-              </small>
+            <div className="owasp-count">
+              {count}
             </div>
           </div>
         )
@@ -2161,6 +2871,148 @@ function ProbeList({ probes }) {
   );
 }
 
+/* =========================================================
+   ACTIVE PROBE LIST
+   ========================================================= */
+
+function ProbeList({
+  probes = [],
+}) {
+  if (!probes.length) {
+    return (
+      <div className="empty-state">
+        <div className="empty-state-title">
+          No active probes recorded
+        </div>
+
+        <div className="empty-state-text">
+          This scan did not expose
+          active probe execution logs.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="probe-list">
+      {probes.map(
+        (
+          probe,
+          index
+        ) => {
+          const vulnerable =
+            probe?.vulnerable ===
+            true;
+
+          const details =
+            probe?.details ||
+            probe?.result ||
+            "No probe details.";
+
+          const lowerDetails =
+            String(
+              details
+            ).toLowerCase();
+
+          const inconclusive =
+            lowerDetails.includes(
+              "inconclusive"
+            );
+
+          let status = "safe";
+
+          if (vulnerable) {
+            status =
+              "vulnerable";
+          } else if (
+            inconclusive
+          ) {
+            status =
+              "inconclusive";
+          }
+
+          return (
+            <div
+              className="probe-row"
+              key={
+                probe?.id ||
+                `${probe?.probe_type}-${index}`
+              }
+            >
+              <div>
+                <div className="probe-type">
+                  {probe?.probe_type ||
+                    probe?.type ||
+                    "Active probe"}
+                </div>
+
+                <div className="probe-param">
+                  {probe?.param_name ||
+                    "No parameter"}
+                </div>
+              </div>
+
+              <div className="probe-details">
+                {details}
+
+                {probe?.target_url && (
+                  <div
+                    style={{
+                      marginTop: 5,
+                      color:
+                        "#596579",
+                      fontFamily:
+                        "monospace",
+                      fontSize: 8,
+                    }}
+                  >
+                    {
+                      probe.target_url
+                    }
+                  </div>
+                )}
+
+                {probe?.status_code !==
+                  undefined &&
+                  probe?.status_code !==
+                    null && (
+                    <div
+                      style={{
+                        marginTop: 5,
+                        color:
+                          "#596579",
+                        fontSize: 8,
+                      }}
+                    >
+                      HTTP{" "}
+                      {
+                        probe.status_code
+                      }
+                    </div>
+                  )}
+              </div>
+
+              <div
+                className={`probe-status ${status}`}
+              >
+                {vulnerable
+                  ? "Vulnerable"
+                  : inconclusive
+                  ? "Inconclusive"
+                  : "Safe"}
+              </div>
+            </div>
+          );
+        }
+      )}
+    </div>
+  );
+}
+
+/* =========================================================
+   PAGE HEADER
+   ========================================================= */
+
 function PageHeader({
   eyebrow,
   title,
@@ -2168,64 +3020,122 @@ function PageHeader({
   action,
 }) {
   return (
-    <header className="page-header">
-      <div>
-        <span className="eyebrow">
-          {eyebrow}
-        </span>
+    <div className="page-header">
+      <div className="page-header-left">
+        {eyebrow && (
+          <div
+            className="hero-eyebrow"
+            style={{
+              marginBottom: 7,
+            }}
+          >
+            {eyebrow}
+          </div>
+        )}
 
-        <h1>{title}</h1>
+        <h1>
+          {title}
+        </h1>
 
-        <p>{description}</p>
+        {description && (
+          <p>
+            {description}
+          </p>
+        )}
       </div>
 
       {action && (
-        <div className="page-header-action">
+        <div className="page-header-actions">
           {action}
         </div>
       )}
-    </header>
+    </div>
   );
 }
 
+/* =========================================================
+   RISK HELPERS
+   ========================================================= */
+
 function getRiskGrade(score) {
-  if (score >= 90) return "F";
-  if (score >= 80) return "E";
-  if (score >= 70) return "D";
-  if (score >= 60) return "C";
-  if (score >= 40) return "B";
-  return "A";
+  const value =
+    Number(score) || 0;
+
+  if (value <= 10)
+    return "A";
+  if (value <= 25)
+    return "B";
+  if (value <= 45)
+    return "C";
+  if (value <= 65)
+    return "D";
+  if (value <= 80)
+    return "E";
+
+  return "F";
 }
 
 function ringStyle(score) {
-  const value = Math.max(
-    0,
-    Math.min(Number(score) || 0, 100)
-  );
+  const value =
+    Math.max(
+      0,
+      Math.min(
+        100,
+        Number(score) || 0
+      )
+    );
 
   return {
-    background: `conic-gradient(var(--accent) ${
-      value * 3.6
-    }deg, var(--surface-3) 0deg)`,
+    background: `conic-gradient(
+      from 0deg,
+      #22d3ee 0%,
+      #3b82f6 ${Math.max(
+        1,
+        value
+      )}%,
+      #8b5cf6 ${Math.max(
+        1,
+        value
+      )}%,
+      #151c29 ${Math.max(
+        1,
+        value
+      )}% 100%
+    )`,
   };
 }
+
+/* =========================================================
+   DATE
+   ========================================================= */
 
 function formatDate(value) {
   if (!value) return "—";
 
-  const date = new Date(value);
+  try {
+    const date =
+      new Date(value);
 
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
+    if (
+      Number.isNaN(
+        date.getTime()
+      )
+    ) {
+      return "—";
+    }
+
+    return date.toLocaleDateString(
+      undefined,
+      {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      }
+    );
+  } catch {
+    return "—";
   }
-
-  return date.toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 export default App;
+

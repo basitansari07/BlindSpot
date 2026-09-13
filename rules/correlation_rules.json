@@ -5,10 +5,10 @@
     "description": "Multiple security misconfigurations detected, indicating a lack of security hardening.",
     "enabled": true,
     "rule_type": "threshold",
-    "match_category": "A05:2021-Security Misconfiguration",
+    "match_category": "A02:2025-Security Misconfiguration",
     "threshold": 5,
     "severity": "high",
-    "owasp_category": "A05:2021-Security Misconfiguration",
+    "owasp_category": "A02:2025-Security Misconfiguration",
     "cwe": "CWE-16"
   },
   {
@@ -29,10 +29,10 @@
     "description": "Multiple outdated software components detected, increasing the attack surface.",
     "enabled": true,
     "rule_type": "threshold",
-    "match_category": "A06:2021-Vulnerable Components",
+    "match_category": "A03:2025-Software Supply Chain Failures",
     "threshold": 3,
     "severity": "high",
-    "owasp_category": "A06:2021-Vulnerable Components",
+    "owasp_category": "A03:2025-Software Supply Chain Failures",
     "cwe": "CWE-1104"
   }
 ]
