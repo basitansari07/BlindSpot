@@ -26,7 +26,7 @@ def run_extended_checks(snapshot, scan_id: str) -> list:
 
 
 def _check_injection_indicators(snapshot, scan_id: str) -> list:
-    """A03:2021-Injection — Detect error messages suggesting injection vulnerabilities."""
+    """A05:2025-Injection — Detect error messages suggesting injection vulnerabilities."""
     findings = []
     now = datetime.now(timezone.utc).isoformat()
     body = snapshot.body_lower
@@ -60,7 +60,7 @@ def _check_injection_indicators(snapshot, scan_id: str) -> list:
                 target_url=snapshot.url, timestamp=now,
                 source_tool="custom", type="vulnerability",
                 severity="high", title=title, description=desc,
-                owasp_category="A03:2021-Injection", cwe=cwe,
+                owasp_category="A05:2025-Injection", cwe=cwe,
                 evidence_location="body",
                 evidence_snippet=match.group(0)[:200],
                 remediation="Use parameterized queries and implement proper error handling.",
@@ -71,7 +71,7 @@ def _check_injection_indicators(snapshot, scan_id: str) -> list:
 
 
 def _check_insecure_design(snapshot, scan_id: str) -> list:
-    """A04:2021-Insecure Design — Detect design-level security issues."""
+    """A06:2025-Insecure Design — Detect design-level security issues."""
     findings = []
     now = datetime.now(timezone.utc).isoformat()
     headers = snapshot.headers
@@ -90,7 +90,7 @@ def _check_insecure_design(snapshot, scan_id: str) -> list:
             title="No Rate Limiting Detected",
             description="The application has forms but no rate-limiting headers were detected. "
                         "This may allow brute-force attacks on login forms or API abuse.",
-            owasp_category="A04:2021-Insecure Design", cwe="CWE-770",
+            owasp_category="A06:2025-Insecure Design", cwe="CWE-770",
             evidence_location="header",
             evidence_snippet="No X-RateLimit-* or RateLimit-* headers found",
             remediation="Implement rate limiting on authentication and sensitive endpoints.",
@@ -109,7 +109,7 @@ def _check_insecure_design(snapshot, scan_id: str) -> list:
                     title="Password Field May Allow Autocomplete",
                     description="A password input field was found. Ensure autocomplete is disabled "
                                 "on sensitive fields to prevent credential caching.",
-                    owasp_category="A04:2021-Insecure Design", cwe="CWE-522",
+                    owasp_category="A06:2025-Insecure Design", cwe="CWE-522",
                     evidence_location="body",
                     evidence_snippet=f"Form action: {form.get('action', 'N/A')}, input: {inp.get('name', 'password')}",
                     remediation="Add autocomplete=\"new-password\" to password inputs.",
@@ -120,7 +120,7 @@ def _check_insecure_design(snapshot, scan_id: str) -> list:
 
 
 def _check_auth_failures(snapshot, scan_id: str) -> list:
-    """A07:2021-Identification and Authentication Failures."""
+    """A07:2025-Authentication Failures."""
     findings = []
     now = datetime.now(timezone.utc).isoformat()
 
@@ -142,7 +142,7 @@ def _check_auth_failures(snapshot, scan_id: str) -> list:
                 title="Login Form Missing CSRF Token",
                 description="A login form was detected without a visible CSRF token field. "
                             "This may allow Cross-Site Request Forgery attacks.",
-                owasp_category="A07:2021-Identification and Authentication Failures",
+                owasp_category="A07:2025-Authentication Failures",
                 cwe="CWE-352",
                 evidence_location="body",
                 evidence_snippet=f"Form action: {form.get('action', 'N/A')}, method: {form.get('method', 'GET')}",
@@ -161,7 +161,7 @@ def _check_auth_failures(snapshot, scan_id: str) -> list:
             title="Session Token in URL",
             description="Session identifier found in the URL. This exposes the session to "
                         "shoulder surfing, referrer leakage, and browser history.",
-            owasp_category="A07:2021-Identification and Authentication Failures",
+            owasp_category="A07:2025-Authentication Failures",
             cwe="CWE-598",
             evidence_location="url",
             evidence_snippet=snapshot.url[:200],
@@ -172,7 +172,7 @@ def _check_auth_failures(snapshot, scan_id: str) -> list:
 
 
 def _check_integrity_failures(snapshot, scan_id: str) -> list:
-    """A08:2021-Software and Data Integrity Failures — Check SRI."""
+    """A08:2025-Software or Data Integrity Failures — Check SRI."""
     findings = []
     now = datetime.now(timezone.utc).isoformat()
     body = snapshot.body or ""
@@ -200,7 +200,7 @@ def _check_integrity_failures(snapshot, scan_id: str) -> list:
             title="Missing Subresource Integrity (SRI)",
             description=f"{len(scripts_without_sri)} external CDN script(s) loaded without "
                         f"Subresource Integrity hashes. A CDN compromise could inject malicious code.",
-            owasp_category="A08:2021-Software and Data Integrity Failures",
+            owasp_category="A08:2025-Software or Data Integrity Failures",
             cwe="CWE-353",
             evidence_location="body",
             evidence_snippet="\n".join(scripts_without_sri[:3]),
@@ -211,7 +211,7 @@ def _check_integrity_failures(snapshot, scan_id: str) -> list:
 
 
 def _check_logging_monitoring(snapshot, scan_id: str) -> list:
-    """A09:2021-Security Logging and Monitoring Failures.
+    """A09:2025-Security Logging and Alerting Failures.
     Heuristic: check for indicators of structured logging/monitoring.
     This is inherently approximate since logging is an internal concern.
     """
@@ -255,7 +255,7 @@ def _check_logging_monitoring(snapshot, scan_id: str) -> list:
                 "This indicates debug mode may be enabled in production and proper error "
                 "handling/logging is not configured."
             ),
-            owasp_category="A09:2021-Security Logging and Monitoring Failures",
+            owasp_category="A09:2025-Security Logging and Alerting Failures",
             cwe="CWE-209",
             evidence_location="body",
             evidence_snippet="Stack trace or debug output detected in response body",
@@ -278,7 +278,7 @@ def _check_logging_monitoring(snapshot, scan_id: str) -> list:
                 "monitoring headers were detected (X-Request-Id, Sentry-Trace, etc.). "
                 "This may indicate insufficient security logging and monitoring."
             ),
-            owasp_category="A09:2021-Security Logging and Monitoring Failures",
+            owasp_category="A09:2025-Security Logging and Alerting Failures",
             cwe="CWE-778",
             evidence_location="header",
             evidence_snippet="No X-Request-Id, X-Correlation-Id, Sentry-Trace, or Datadog headers found",
@@ -293,7 +293,7 @@ def _check_logging_monitoring(snapshot, scan_id: str) -> list:
 
 
 def _check_ssrf_indicators(snapshot, scan_id: str) -> list:
-    """A10:2021-Server-Side Request Forgery (SSRF).
+    """A01:2025-Broken Access Control (SSRF).
     Passively detect URL parameters that could be SSRF entry points.
     """
     findings = []
@@ -331,7 +331,7 @@ def _check_ssrf_indicators(snapshot, scan_id: str) -> list:
                 f"{', '.join(found_params)}. These may be exploitable for Server-Side Request "
                 f"Forgery (SSRF) if the server fetches user-supplied URLs without validation."
             ),
-            owasp_category="A10:2021-Server-Side Request Forgery",
+            owasp_category="A01:2025-Broken Access Control",
             cwe="CWE-918",
             evidence_location="url" if any(p + "=" in url_lower for p in found_params) else "body",
             evidence_snippet=f"Potentially vulnerable parameters: {', '.join(found_params)}",

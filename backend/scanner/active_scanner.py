@@ -226,7 +226,7 @@ def _probe_xss(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: boo
                     f"(XSS) vulnerability."
                 ),
                 severity="high",
-                owasp="A03:2021-Injection",
+                owasp="A05:2025-Injection",
                 cwe="CWE-79",
                 evidence=evidence_log,
                 remediation=(
@@ -294,7 +294,7 @@ def _probe_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bo
                             f"vulnerability. Error signature: {match.group(0)[:100]}"
                         ),
                         severity="critical",
-                        owasp="A03:2021-Injection",
+                        owasp="A05:2025-Injection",
                         cwe="CWE-89",
                         evidence=evidence_log,
                         remediation=(
@@ -313,132 +313,218 @@ def _probe_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bo
 
 def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
     """
-    Time-Based Blind SQL Injection probe.
-    Injects SLEEP/pg_sleep/WAITFOR payloads and measures if response is
-    significantly delayed compared to a baseline request.
+    Time-Based Blind SQLi probe.
+
+    Timeout is always inconclusive.
+    Multiple benign baselines reduce timing noise.
+    A finding requires both absolute and relative delay thresholds.
     """
     method_str = "POST" if use_post else "GET"
-    finding = None
-    last_log = None
 
-    # Step 1: Establish baseline response time with a benign value
-    baseline_url, baseline_post = _prepare_injection(param, "mapper_baseline_1", use_post=use_post)
+    baseline_url, _ = _prepare_injection(
+        param, "mapper_baseline_1", use_post=use_post
+    )
+
     if not baseline_url:
         return None, None
 
-    baseline_time = 0.0
-    try:
-        t_start = time.monotonic()
-        if use_post:
-            fetcher.fetch_post(baseline_url, data=baseline_post, timeout=8)
-        else:
-            fetcher.fetch(baseline_url, timeout=8)
-        baseline_time = time.monotonic() - t_start
-    except Exception:
-        baseline_time = 1.0  # conservative fallback
+    baseline_samples = []
 
-    # Step 2: Test each blind SQLi payload
+    for value in ("mapper_baseline_1", "mapper_baseline_2"):
+        test_url, test_post = _prepare_injection(
+            param, value, use_post=use_post
+        )
+
+        if not test_url:
+            continue
+
+        try:
+            started = time.monotonic()
+
+            if use_post:
+                fetcher.fetch_post(test_url, data=test_post, timeout=8)
+            else:
+                fetcher.fetch(test_url, timeout=8)
+
+            baseline_samples.append(time.monotonic() - started)
+
+        except Exception as e:
+            logger.debug(
+                f"[Blind SQLi] Baseline error on {param.param_name}: {e}"
+            )
+
+    if not baseline_samples:
+        return None, {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "param_name": param.param_name,
+            "probe_type": f"Time-Based Blind SQLi ({method_str})",
+            "target_url": baseline_url,
+            "payload": None,
+            "status_code": 0,
+            "vulnerable": False,
+            "details": (
+                "Unable to establish reliable baseline; "
+                "timing result is inconclusive"
+            ),
+        }
+
+    baseline_time = max(baseline_samples)
+    last_log = None
+
     for payload_template, db_label in BLIND_SQLI_PAYLOADS:
-        payload = payload_template.format(sleep=BLIND_SQLI_SLEEP_SECONDS)
-        probe_url, post_data = _prepare_injection(param, payload, use_post=use_post)
+
+        payload = payload_template.format(
+            sleep=BLIND_SQLI_SLEEP_SECONDS
+        )
+
+        probe_url, post_data = _prepare_injection(
+            param, payload, use_post=use_post
+        )
+
         if not probe_url:
             continue
 
         log_item = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "param_name": param.param_name,
-            "probe_type": f"Time-Based Blind SQLi ({db_label}) ({method_str})",
+            "probe_type": (
+                f"Time-Based Blind SQLi ({db_label}) ({method_str})"
+            ),
             "target_url": probe_url,
             "payload": payload,
             "status_code": 0,
             "vulnerable": False,
-            "details": f"Baseline: {baseline_time:.2f}s — No significant delay detected (Safe)",
+            "details": (
+                f"Baseline max: {baseline_time:.2f}s — "
+                f"Testing for delayed response"
+            ),
         }
+
         last_log = log_item
 
         try:
-            t_start = time.monotonic()
+            started = time.monotonic()
+
             if use_post:
-                result = fetcher.fetch_post(probe_url, data=post_data, timeout=BLIND_SQLI_SLEEP_SECONDS + 5)
+                result = fetcher.fetch_post(
+                    probe_url,
+                    data=post_data,
+                    timeout=BLIND_SQLI_SLEEP_SECONDS + 5,
+                )
             else:
-                result = fetcher.fetch(probe_url, timeout=BLIND_SQLI_SLEEP_SECONDS + 5)
-            elapsed = time.monotonic() - t_start
+                result = fetcher.fetch(
+                    probe_url,
+                    timeout=BLIND_SQLI_SLEEP_SECONDS + 5,
+                )
+
+            elapsed = time.monotonic() - started
 
             if result:
                 log_item["status_code"] = result.status_code
 
             delay_delta = elapsed - baseline_time
 
-            if delay_delta >= BLIND_SQLI_THRESHOLD:
+            required_minimum = max(
+                baseline_time * 2.0,
+                baseline_time + 1.0,
+            )
+
+            if (
+                delay_delta >= BLIND_SQLI_THRESHOLD
+                and elapsed >= required_minimum
+            ):
                 log_item["vulnerable"] = True
+
                 log_item["details"] = (
-                    f"RESPONSE DELAYED {elapsed:.2f}s (baseline {baseline_time:.2f}s, "
-                    f"delta +{delay_delta:.2f}s) — Blind SQLi ({db_label}) CONFIRMED"
+                    f"RESPONSE DELAYED {elapsed:.2f}s "
+                    f"(baseline max {baseline_time:.2f}s, "
+                    f"delta +{delay_delta:.2f}s) — "
+                    f"Blind SQLi ({db_label}) CONFIRMED"
                 )
-                now = datetime.now(timezone.utc).isoformat()
+
+                evidence_log = chr(10).join([
+                    "[ACTIVE PROBE EXECUTION LOG]",
+                    f"Probe Type: Time-Based Blind SQLi ({db_label}) ({method_str})",
+                    f"Target: {probe_url}",
+                    f"POST Data: {post_data if use_post else 'N/A'}",
+                    f"Payload: {payload}",
+                    f"Baseline Samples: {', '.join(f'{x:.2f}s' for x in baseline_samples)}",
+                    f"Baseline Max: {baseline_time:.2f}s",
+                    f"Probed Response: {elapsed:.2f}s",
+                    f"Delta: +{delay_delta:.2f}s",
+                    f"Required Delta: {BLIND_SQLI_THRESHOLD:.2f}s",
+                    f"Required Minimum Response: {required_minimum:.2f}s",
+                    "Verdict: VULNERABLE — Significant delayed response confirmed",
+                ])
+
                 finding = Finding(
                     id=str(uuid.uuid4()),
                     scan_id=scan_id,
                     target_url=probe_url,
-                    timestamp=now,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
                     source_tool="active_probe",
                     type="vulnerability",
                     severity="critical",
-                    title=f"Time-Based Blind SQL Injection ({db_label}) ({method_str})",
-                    description=(
-                        f"Parameter '{param.param_name}' ({method_str}) is vulnerable to time-based blind "
-                        f"SQL injection via {db_label}. The server delayed {elapsed:.2f}s "
-                        f"(baseline {baseline_time:.2f}s, delta +{delay_delta:.2f}s) when "
-                        f"injecting: {payload}"
+                    title=(
+                        f"Time-Based Blind SQL Injection "
+                        f"({db_label}) ({method_str})"
                     ),
-                    owasp_category="A03:2021-Injection",
+                    description=(
+                        f"Parameter '{param.param_name}' ({method_str}) "
+                        f"produced a significant server-side response "
+                        f"delay using a {db_label} time-delay payload. "
+                        f"Observed response: {elapsed:.2f}s; "
+                        f"baseline: {baseline_time:.2f}s; "
+                        f"delta: +{delay_delta:.2f}s."
+                    ),
+                    owasp_category="A05:2025-Injection",
                     cwe="CWE-89",
                     evidence_location="response_time",
-                    evidence_snippet=(
-                        f"[ACTIVE PROBE EXECUTION LOG]\n"
-                        f"Probe Type: Time-Based Blind SQLi ({db_label}) ({method_str})\n"
-                        f"Target: {probe_url}\n"
-                        f"POST Data: {post_data if use_post else 'N/A'}\n"
-                        f"Payload: {payload}\n"
-                        f"Baseline Response: {baseline_time:.2f}s\n"
-                        f"Probed Response:   {elapsed:.2f}s\n"
-                        f"Delta:             +{delay_delta:.2f}s (threshold: {BLIND_SQLI_THRESHOLD}s)\n"
-                        f"Verdict:           VULNERABLE — Significant delay confirms blind injection"
+                    evidence_snippet=evidence_log,
+                    remediation=(
+                        "Use parameterized queries / prepared statements. "
+                        "Never concatenate user input into SQL."
                     ),
-                    remediation="Use parameterized queries / prepared statements. Never concatenate user input into SQL.",
                 )
-                break
-            else:
-                log_item["details"] = (
-                    f"Response: {elapsed:.2f}s (baseline {baseline_time:.2f}s, "
-                    f"delta +{delay_delta:.2f}s) — Below threshold {BLIND_SQLI_THRESHOLD}s (Safe)"
-                )
+
+                return finding, log_item
+
+            log_item["details"] = (
+                f"Response: {elapsed:.2f}s "
+                f"(baseline max {baseline_time:.2f}s, "
+                f"delta +{delay_delta:.2f}s) — "
+                f"Below confirmation threshold; Safe"
+            )
 
         except Exception as e:
-            err_str = str(e).lower()
 
-            if "timeout" in err_str or "timed out" in err_str:
-                # A timeout by itself is NOT sufficient evidence of Blind SQLi.
-                # Network congestion, server load, WAF behavior, rate limiting,
-                # or an application-side timeout can all produce the same result.
-                # Keep the probe inconclusive and continue testing other payloads.
+            err = str(e).lower()
+
+            if "timeout" in err or "timed out" in err:
                 log_item["vulnerable"] = False
                 log_item["details"] = (
-                    f"REQUEST TIMED OUT after the probe timeout window "
-                    f"(baseline {baseline_time:.2f}s) — inconclusive; "
-                    f"timeout alone is not treated as Blind SQLi"
+                    f"Request timed out after the probe timeout window "
+                    f"(baseline max {baseline_time:.2f}s) — "
+                    f"inconclusive; timeout alone is NOT treated "
+                    f"as Blind SQLi"
                 )
+
                 logger.debug(
-                    f"[Blind SQLi] Timeout on {param.param_name} "
-                    f"({db_label}) — not counted as vulnerability"
+                    f"[Blind SQLi] Timeout on "
+                    f"{param.param_name} ({db_label}) — "
+                    f"not counted as vulnerability"
                 )
+
                 continue
 
-            logger.debug(f"[Blind SQLi] Error on {param.param_name}: {e}")
             log_item["details"] = f"Network error: {e}"
 
-    return finding, last_log
+            logger.debug(
+                f"[Blind SQLi] Error on "
+                f"{param.param_name} ({db_label}): {e}"
+            )
 
+    return None, last_log
 
 def _probe_lfi(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
     method_str = "POST" if use_post else "GET"
@@ -495,7 +581,7 @@ def _probe_lfi(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: boo
                                 f"file in its response. Matched indicator: {match.group(0)[:100]}"
                             ),
                             severity="critical",
-                            owasp="A01:2021-Broken Access Control",
+                            owasp="A01:2025-Broken Access Control",
                             cwe="CWE-22",
                             evidence=evidence_log,
                             remediation=(
@@ -563,7 +649,7 @@ def _probe_crlf(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bo
                     f"('{marker}: 1') to appear in the HTTP response headers."
                 ),
                 severity="high",
-                owasp="A03:2021-Injection",
+                owasp="A05:2025-Injection",
                 cwe="CWE-113",
                 evidence=evidence_log,
                 remediation=(
@@ -594,7 +680,7 @@ def _probe_crlf(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bo
                     f"The injected marker '{marker}' appeared in the response body."
                 ),
                 severity="medium",
-                owasp="A03:2021-Injection",
+                owasp="A05:2025-Injection",
                 cwe="CWE-113",
                 evidence=evidence_log,
                 remediation=(
@@ -677,7 +763,7 @@ def _probe_open_redirect(fetcher: Fetcher, param: ParamTarget, scan_id: str):
                         f"which can be abused for phishing."
                     ),
                     severity="medium",
-                    owasp="A01:2021-Broken Access Control",
+                    owasp="A01:2025-Broken Access Control",
                     cwe="CWE-601",
                     evidence=evidence_log,
                     remediation=(

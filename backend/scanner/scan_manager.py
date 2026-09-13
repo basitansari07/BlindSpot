@@ -312,9 +312,20 @@ class ScanOrchestrator:
         else:
             logger.info(f"[Scan {scan_id[:8]}] Skipping active probes (passive mode)")
 
+        # ── DEBUG: inspect findings before TLS ────────────────
+        logger.info("[TRACE BEFORE TLS] %s", [
+            (f.title, getattr(f, "cve", ""), getattr(f, "source", ""))
+            for f in findings
+        ])
+
         # ── Stage 7: Evaluate transport-layer (TLS) posture ───
         tls_findings = self._check_tls(snapshot, scan_id)
         findings.extend(tls_findings)
+
+        logger.info("[TRACE AFTER TLS] %s", [
+            (f.title, getattr(f, "cve", ""), getattr(f, "source", ""))
+            for f in findings
+        ])
 
         self._update_job(scan_id, status="correlating", progress=75)
 
@@ -370,25 +381,25 @@ class ScanOrchestrator:
         sensitive_paths = [
             ("/.git/config", "Exposed Git Repository", "critical",
              "Git configuration file is publicly accessible, potentially exposing source code and credentials.",
-             "A05:2021-Security Misconfiguration"),
+             "A02:2025-Security Misconfiguration"),
             ("/.env", "Exposed Environment File", "critical",
              "Environment file with potential secrets (API keys, DB passwords) is publicly accessible.",
-             "A05:2021-Security Misconfiguration"),
+             "A02:2025-Security Misconfiguration"),
             ("/robots.txt", "Robots.txt Found", "info",
              "Robots.txt file found — may reveal hidden paths.",
-             "A01:2021-Broken Access Control"),
+             "A01:2025-Broken Access Control"),
             ("/.htaccess", "Exposed .htaccess", "high",
              "Apache .htaccess file is publicly accessible.",
-             "A05:2021-Security Misconfiguration"),
+             "A02:2025-Security Misconfiguration"),
             ("/wp-login.php", "WordPress Login Page", "info",
              "WordPress login page is accessible — confirms WordPress installation.",
-             "A07:2021-Identification and Authentication Failures"),
+             "A07:2025-Authentication Failures"),
             ("/admin", "Admin Panel Accessible", "medium",
              "Administrative interface is publicly accessible without authentication.",
-             "A01:2021-Broken Access Control"),
+             "A01:2025-Broken Access Control"),
             ("/crossdomain.xml", "Cross-Domain Policy", "low",
              "Cross-domain policy file found.",
-             "A05:2021-Security Misconfiguration"),
+             "A02:2025-Security Misconfiguration"),
             ("/sitemap.xml", "Sitemap Found", "info",
              "Sitemap.xml found — reveals site structure.",
              ""),
@@ -467,32 +478,32 @@ class ScanOrchestrator:
         required_headers = [
             ("strict-transport-security", "Missing HSTS Header", "medium",
              "Strict-Transport-Security header is not set. Communication may be vulnerable to SSL stripping.",
-             "A05:2021-Security Misconfiguration", "CWE-523",
+             "A02:2025-Security Misconfiguration", "CWE-523",
              "Add 'Strict-Transport-Security: max-age=31536000; includeSubDomains' header."),
 
             ("content-security-policy", "Missing Content-Security-Policy", "medium",
              "Content-Security-Policy (CSP) header is not set. Site lacks defense-in-depth against XSS.",
-             "A05:2021-Security Misconfiguration", "CWE-1021",
+             "A02:2025-Security Misconfiguration", "CWE-1021",
              "Implement a restrictive CSP header (e.g. default-src 'self')."),
 
             ("x-frame-options", "Missing X-Frame-Options", "low",
              "X-Frame-Options header is not set. Page may be vulnerable to Clickjacking.",
-             "A05:2021-Security Misconfiguration", "CWE-1021",
+             "A02:2025-Security Misconfiguration", "CWE-1021",
              "Set 'X-Frame-Options: DENY' or 'SAMEORIGIN'."),
 
             ("x-content-type-options", "Missing X-Content-Type-Options", "low",
              "X-Content-Type-Options header is missing. Browsers may MIME-sniff response types.",
-             "A05:2021-Security Misconfiguration", "CWE-116",
+             "A02:2025-Security Misconfiguration", "CWE-116",
              "Set 'X-Content-Type-Options: nosniff'."),
 
             ("referrer-policy", "Missing Referrer-Policy", "info",
              "Referrer-Policy header is not configured.",
-             "A05:2021-Security Misconfiguration", "CWE-200",
+             "A02:2025-Security Misconfiguration", "CWE-200",
              "Set 'Referrer-Policy: strict-origin-when-cross-origin'."),
 
             ("permissions-policy", "Missing Permissions-Policy", "info",
              "Permissions-Policy header is missing. Browser features are not restricted.",
-             "A05:2021-Security Misconfiguration", "",
+             "A02:2025-Security Misconfiguration", "",
              "Configure Permissions-Policy header."),
         ]
 
@@ -538,7 +549,7 @@ class ScanOrchestrator:
                         severity="medium",
                         title=f"Cookie '{cname}' Missing Secure Flag",
                         description=f"The cookie '{cname}' is transmitted over HTTPS but lacks the Secure flag.",
-                        owasp_category="A05:2021-Security Misconfiguration",
+                        owasp_category="A02:2025-Security Misconfiguration",
                         cwe="CWE-614",
                         evidence_location="cookies",
                         evidence_snippet=f"Cookie: {cname}={cinfo.get('value', '')[:20]}",
@@ -556,7 +567,7 @@ class ScanOrchestrator:
                         severity="medium",
                         title=f"Session Cookie '{cname}' Missing HttpOnly Flag",
                         description=f"Session cookie '{cname}' lacks HttpOnly flag, making it accessible via JavaScript.",
-                        owasp_category="A05:2021-Security Misconfiguration",
+                        owasp_category="A02:2025-Security Misconfiguration",
                         cwe="CWE-1004",
                         evidence_location="cookies",
                         evidence_snippet=f"Cookie: {cname}={cinfo.get('value', '')[:20]}",
@@ -581,7 +592,7 @@ class ScanOrchestrator:
                 severity="high",
                 title="Target Uses Unencrypted HTTP",
                 description="Target website is served over unencrypted HTTP. All data in transit can be intercepted.",
-                owasp_category="A02:2021-Cryptographic Failures",
+                owasp_category="A04:2025-Cryptographic Failures",
                 cwe="CWE-319",
                 evidence_location="scheme",
                 evidence_snippet=f"URL: {snapshot.url}",
@@ -600,7 +611,7 @@ class ScanOrchestrator:
                 severity="medium",
                 title="TLS Inspection Error",
                 description=f"Failed to inspect TLS configuration: {snapshot.tls_error}",
-                owasp_category="A02:2021-Cryptographic Failures",
+                owasp_category="A04:2025-Cryptographic Failures",
                 cwe="CWE-295",
                 evidence_location="tls",
                 evidence_snippet=snapshot.tls_error,
@@ -618,7 +629,7 @@ class ScanOrchestrator:
                 severity="high",
                 title=f"Deprecated TLS Protocol ({snapshot.tls_protocol})",
                 description=f"Server supports deprecated protocol {snapshot.tls_protocol}.",
-                owasp_category="A02:2021-Cryptographic Failures",
+                owasp_category="A04:2025-Cryptographic Failures",
                 cwe="CWE-326",
                 evidence_location="tls",
                 evidence_snippet=f"Protocol: {snapshot.tls_protocol}",

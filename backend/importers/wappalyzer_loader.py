@@ -127,7 +127,7 @@ def _convert_technology(tech_name: str, tech_info: dict, safe_versions: dict) ->
             "severity": "medium" if has_vuln_data else "info",
             "title": f"{tech_name} Detected" + (" (Outdated)" if has_vuln_data else ""),
             "description": f"Technology '{tech_name}' was detected via HTML pattern matching.",
-            "owasp_category": "A06:2021-Vulnerable Components" if has_vuln_data else "",
+            "owasp_category": "A03:2025-Software Supply Chain Failures" if has_vuln_data else "",
             "remediation": f"Keep {tech_name} updated to the latest stable version.",
             "source": "wappalyzer",
         }
@@ -172,7 +172,7 @@ def _convert_technology(tech_name: str, tech_info: dict, safe_versions: dict) ->
             "severity": "medium" if has_vuln_data else "info",
             "title": f"{tech_name} Detected (Script)",
             "description": f"Technology '{tech_name}' detected via script source pattern.",
-            "owasp_category": "A06:2021-Vulnerable Components" if has_vuln_data else "",
+            "owasp_category": "A03:2025-Software Supply Chain Failures" if has_vuln_data else "",
             "remediation": f"Keep {tech_name} updated to the latest stable version.",
             "source": "wappalyzer",
         }

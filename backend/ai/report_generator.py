@@ -51,6 +51,49 @@ from reportlab.pdfbase import pdfmetrics
 REPORT_TITLE = "BlindSpot Security Assessment Report"
 PRODUCT_NAME = "BLINDSPOT"
 
+
+OWASP_2025_MAP = {
+    "A01:2021": "A01:2025-Broken Access Control",
+    "A02:2021": "A04:2025-Cryptographic Failures",
+    "A03:2021": "A05:2025-Injection",
+    "A04:2021": "A06:2025-Insecure Design",
+    "A05:2021": "A02:2025-Security Misconfiguration",
+    "A06:2021": "A03:2025-Software Supply Chain Failures",
+    "A07:2021": "A07:2025-Authentication Failures",
+    "A08:2021": "A08:2025-Software or Data Integrity Failures",
+    "A09:2021": "A09:2025-Security Logging and Alerting Failures",
+    "A10:2021": "A01:2025-Broken Access Control",
+}
+
+
+def _normalize_owasp_category(category):
+    if not category:
+        return "Not mapped"
+
+    value = str(category).strip()
+
+    # Remove accidental duplicated OWASP 2025 prefix.
+    # Example:
+    # A03:2025-A03:2025-Software Supply Chain Failures
+    # -> A03:2025-Software Supply Chain Failures
+    duplicate_prefix = re.match(
+        r"^(A\\d{2}:2025-)(A\\d{2}:2025-)(.+)$",
+        value
+    )
+    if duplicate_prefix:
+        value = duplicate_prefix.group(1) + duplicate_prefix.group(3)
+
+    # Already correct OWASP 2025 category.
+    if value.startswith("A") and ":2025-" in value:
+        return value
+
+    # Convert legacy 2021 category by category number.
+    for old_prefix, new_category in OWASP_2025_MAP.items():
+        if value.startswith(old_prefix):
+            return new_category
+
+    return value
+
 SEVERITY_ORDER = {
     "critical": 0,
     "high": 1,
@@ -333,7 +376,7 @@ def _extract_owasp_counts(report_data):
                 count = value
 
             try:
-                result[str(key)] = int(count)
+                result[_normalize_owasp_category(key)] = result.get(_normalize_owasp_category(key), 0) + int(count)
             except Exception:
                 result[str(key)] = 0
 
@@ -569,7 +612,7 @@ def _build_finding_entry(finding, index):
     if cvss is None:
         cvss = "N/A"
 
-    owasp = (
+    owasp = _normalize_owasp_category(
         finding.get("owasp_category")
         or finding.get("owasp")
         or "Not mapped"

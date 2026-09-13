@@ -818,6 +818,9 @@ def _parse_template(
             or matcher_group[
                 "requires_interactsh"
             ]
+            or matcher_group[
+                "raw_requests"
+            ]
         )
 
         rules.append({
@@ -1151,7 +1154,7 @@ def _infer_owasp_category(
         )
     ):
 
-        return "A03:2021-Injection"
+        return "A05:2025-Injection"
 
     if any(
         value in tags_text
@@ -1161,12 +1164,12 @@ def _infer_owasp_category(
         )
     ):
 
-        return "A03:2021-Injection"
+        return "A05:2025-Injection"
 
     if "ssrf" in tags_text:
 
         return (
-            "A10:2021-"
+            "A01:2025-"
             "Server-Side Request Forgery"
         )
 
@@ -1179,10 +1182,7 @@ def _infer_owasp_category(
         )
     ):
 
-        return (
-            "A05:2021-"
-            "Security Misconfiguration"
-        )
+        return "A02:2025-Security Misconfiguration"
 
     if any(
         value in tags_text
@@ -1193,7 +1193,7 @@ def _infer_owasp_category(
     ):
 
         return (
-            "A01:2021-"
+            "A01:2025-"
             "Broken Access Control"
         )
 
@@ -1205,10 +1205,7 @@ def _infer_owasp_category(
         )
     ):
 
-        return (
-            "A06:2021-"
-            "Vulnerable Components"
-        )
+        return "A03:2025-Software Supply Chain Failures"
 
     if any(
         value in tags_text
@@ -1220,7 +1217,7 @@ def _infer_owasp_category(
     ):
 
         return (
-            "A07:2021-"
+            "A07:2025-"
             "Identification and Authentication Failures"
         )
 
@@ -1234,7 +1231,7 @@ def _infer_owasp_category(
     ):
 
         return (
-            "A01:2021-"
+            "A01:2025-"
             "Broken Access Control"
         )
 
@@ -1247,15 +1244,15 @@ def _infer_owasp_category(
     ):
 
         return (
-            "A01:2021-"
+            "A01:2025-"
             "Broken Access Control"
         )
 
     if "takeover" in tags_text:
 
         return (
-            "A05:2021-"
-            "Security Misconfiguration"
+            "A02:2025-"
+            "A02:2025-Security Misconfiguration"
         )
 
     return ""

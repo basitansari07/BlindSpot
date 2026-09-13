@@ -159,16 +159,17 @@ class RiskScorer:
         Shows which categories have findings and how many.
         """
         owasp_categories = {
-            "A01:2021-Broken Access Control": 0,
-            "A02:2021-Cryptographic Failures": 0,
-            "A03:2021-Injection": 0,
-            "A04:2021-Insecure Design": 0,
-            "A05:2021-Security Misconfiguration": 0,
-            "A06:2021-Vulnerable Components": 0,
-            "A07:2021-Identification and Authentication Failures": 0,
-            "A08:2021-Software and Data Integrity Failures": 0,
-            "A09:2021-Security Logging and Monitoring Failures": 0,
-            "A10:2021-Server-Side Request Forgery": 0,
+            "A01:2025-Broken Access Control": 0,
+            "A04:2025-Cryptographic Failures": 0,
+            "A05:2025-Injection": 0,
+            "A06:2025-Insecure Design": 0,
+            "A02:2025-Security Misconfiguration": 0,
+            "A03:2025-Software Supply Chain Failures": 0,
+            "A07:2025-Authentication Failures": 0,
+            "A08:2025-Software or Data Integrity Failures": 0,
+            "A09:2025-Security Logging and Alerting Failures": 0,
+            "A10:2025-Mishandling of Exceptional Conditions": 0,
+            "A01:2025-Broken Access Control": 0,
         }
 
         for f in findings:
