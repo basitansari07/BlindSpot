@@ -446,99 +446,101 @@ function App() {
     const startedAt = Date.now();
 
     while (true) {
-      try {
-        const status =
-          await api("/scan/" + scanId);
+      const statusResponse = await api(
+        "/scan/" + scanId
+      );
 
-        const currentStatus =
-          String(
-            status?.status ||
-              status?.scan_status ||
-              ""
-          ).toLowerCase();
+      const status =
+        statusResponse?.scan ||
+        statusResponse?.data ||
+        statusResponse?.result ||
+        statusResponse ||
+        {};
 
-        const progressValue =
-          Number(
-            status?.progress ??
-              status?.percentage ??
-              0
-          );
+      const currentStatus =
+        String(
+          status?.status ||
+          status?.scan_status ||
+          status?.state ||
+          status?.phase ||
+          statusResponse?.status ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
 
-        const elapsed =
-          Date.now() - startedAt;
+      const progressValue = Number(
+        status?.progress ??
+        status?.percentage ??
+        statusResponse?.progress ??
+        statusResponse?.percentage ??
+        0
+      );
 
-        let calculatedProgress =
-          progressValue;
+      const elapsed = Date.now() - startedAt;
 
-        if (!calculatedProgress) {
-          calculatedProgress =
-            Math.min(
-              95,
-              15 + elapsed / 1000
-            );
-        }
+      let calculatedProgress = progressValue;
 
+      if (!calculatedProgress) {
+        calculatedProgress = Math.min(
+          95,
+          15 + elapsed / 1000
+        );
+      }
+
+      if (
+        currentStatus === "completed" ||
+        currentStatus === "complete" ||
+        currentStatus === "finished" ||
+        currentStatus === "done" ||
+        status?.completed === true ||
+        statusResponse?.completed === true
+      ) {
         setScanProgress({
-          percent: Math.round(
-            Math.min(
-              99,
-              calculatedProgress
-            )
-          ),
-          status:
-            status?.message ||
-            (currentStatus ===
-            "completed"
-              ? "Scan completed."
-              : currentStatus ===
-                "failed"
-              ? "Scan failed."
-              : "Scanning target..."),
+          percent: 100,
+          status: "Scan completed.",
           scanId,
         });
 
-        if (
-          currentStatus ===
-            "completed" ||
-          currentStatus ===
-            "complete" ||
-          status?.completed === true
-        ) {
-          setScanProgress({
-            percent: 100,
-            status: "Scan completed.",
-            scanId,
-          });
+        await Promise.all([
+          loadDashboard(),
+          openScan(scanId),
+        ]);
 
-          await loadDashboard();
-          await openScan(scanId);
+        window.setTimeout(() => {
+          setScanProgress(null);
+        }, 800);
 
-          window.setTimeout(() => {
-            setScanProgress(null);
-          }, 800);
-
-          return;
-        }
-
-        if (
-          currentStatus ===
-            "failed" ||
-          currentStatus === "error"
-        ) {
-          throw new Error(
-            status?.error ||
-              status?.message ||
-              "Scan failed."
-          );
-        }
-
-        await new Promise(
-          (resolve) =>
-            setTimeout(resolve, 1500)
-        );
-      } catch (error) {
-        throw error;
+        return;
       }
+
+      if (
+        currentStatus === "failed" ||
+        currentStatus === "error"
+      ) {
+        throw new Error(
+          status?.error ||
+          statusResponse?.error ||
+          status?.message ||
+          statusResponse?.message ||
+          "Scan failed."
+        );
+      }
+
+      setScanProgress({
+        percent: Math.round(
+          Math.min(99, calculatedProgress)
+        ),
+        status:
+          status?.message ||
+          statusResponse?.message ||
+          "Scanning target...",
+        scanId,
+      });
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, 500)
+      );
     }
   }
 
@@ -549,8 +551,8 @@ function App() {
   async function openScan(scanId) {
     try {
       const [
-        reportData,
-        scanData,
+        reportResponse,
+        scanResponse,
       ] = await Promise.all([
         api(
           "/scan/" +
@@ -560,46 +562,89 @@ function App() {
         api("/scan/" + scanId),
       ]);
 
+      const scanData =
+        scanResponse?.scan ||
+        scanResponse?.data ||
+        scanResponse?.result ||
+        scanResponse ||
+        {};
+
+      const reportData =
+        reportResponse?.report ||
+        reportResponse?.data ||
+        reportResponse?.result ||
+        reportResponse ||
+        {};
+
       const mergedReport = {
-        ...(reportData || {}),
+        ...reportData,
       };
 
-      if (
-        Array.isArray(
-          scanData?.active_probes_log
-        )
-      ) {
-        mergedReport.active_probes_log =
-          scanData.active_probes_log;
-      } else if (
-        Array.isArray(
-          reportData?.active_probes_log
-        )
-      ) {
-        mergedReport.active_probes_log =
-          reportData.active_probes_log;
-      }
+      const reportFindings =
+        reportData?.findings ||
+        reportData?.results ||
+        reportData?.vulnerabilities ||
+        reportData?.issues;
+
+      const scanFindings =
+        scanData?.findings ||
+        scanData?.results ||
+        scanData?.vulnerabilities ||
+        scanData?.issues;
 
       if (
-        !Array.isArray(
-          mergedReport.findings
-        ) &&
-        Array.isArray(
-          scanData?.findings
-        )
+        Array.isArray(reportFindings)
       ) {
         mergedReport.findings =
-          scanData.findings;
+          reportFindings;
+      } else if (
+        Array.isArray(scanFindings)
+      ) {
+        mergedReport.findings =
+          scanFindings;
       }
 
-      setSelectedScan({
-        ...(scanData || {}),
+      const activeProbes =
+        reportData?.active_probes_log ||
+        scanData?.active_probes_log ||
+        reportData?.active_probes ||
+        scanData?.active_probes;
+
+      if (
+        Array.isArray(activeProbes)
+      ) {
+        mergedReport.active_probes_log =
+          activeProbes;
+      }
+
+      const selected = {
+        ...scanData,
         id:
           scanData?.id ||
           scanData?.scan_id ||
+          scanData?.uuid ||
           scanId,
-      });
+        scan_id:
+          scanData?.scan_id ||
+          scanData?.id ||
+          scanData?.uuid ||
+          scanId,
+        url:
+          scanData?.url ||
+          scanData?.target_url ||
+          scanData?.target ||
+          reportData?.url ||
+          reportData?.target_url,
+        risk_score:
+          scanData?.risk_score ??
+          scanData?.risk ??
+          scanData?.score ??
+          reportData?.risk_score ??
+          reportData?.risk ??
+          reportData?.score,
+      };
 
+      setSelectedScan(selected);
       setReport(mergedReport);
       setPage("report");
       setFindingFilter("all");
@@ -1387,9 +1432,7 @@ function Dashboard({
           </h2>
 
           <p className="hero-description">
-            <p className="hero-description">
-  Continuous scanning across headers, endpoints, and known vulnerability signatures.
-</p>
+            Continuous scanning across headers, endpoints, and known vulnerability signatures.
           </p>
 
           <div className="hero-status">
@@ -3138,4 +3181,3 @@ function formatDate(value) {
 }
 
 export default App;
-
