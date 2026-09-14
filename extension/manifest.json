@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "BlindSpot Security Scanner",
   "version": "1.0.0",
-  "description": "Passive-first web security assessment powered by BlindSpot.",
+  "description": "Website vulnerability scanner powered by BlindSpot.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "BlindSpot Security Scanner"
@@ -18,5 +18,8 @@
   "host_permissions": [
     "http://*/*",
     "https://*/*"
-  ]
+  ],
+  "content_security_policy": {
+    "extension_pages": "style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;"
+  }
 }

@@ -534,7 +534,7 @@ function App() {
         status:
           status?.message ||
           statusResponse?.message ||
-          "Scanning target...",
+          "",
         scanId,
       });
 
@@ -1779,10 +1779,7 @@ function NewScanPage({
         </div>
 
         <div className="warning-box">
-          Active scanning generates
-          requests against the target.
-          Use it only with explicit
-          authorization.
+          Active scanning performs controlled requests against the target. Run it only with explicit authorization.
         </div>
 
         {scanProgress && (
@@ -1826,8 +1823,8 @@ function NewScanPage({
             )}
           >
             {scanProgress
-              ? "Scanning..."
-              : "Start security scan"}
+              ? "Scan in progress..."
+              : "Start scan"}
           </button>
         </div>
       </form>
@@ -2387,7 +2384,6 @@ function ReportPage({
   return (
     <>
       <PageHeader
-        eyebrow="SECURITY REPORT"
         title="Assessment report"
         description={target}
         action={
@@ -2422,7 +2418,7 @@ function ReportPage({
                     )
                   }
                 >
-                  AI PDF
+                  Download PDF
                 </button>
               </>
             )}
@@ -2532,12 +2528,12 @@ function ReportPage({
 
           <div className="finding-filter">
             {[
-              "all",
-              "critical",
-              "high",
-              "medium",
-              "low",
-              "info",
+              "All",
+              "Critical",
+              "High",
+              "Medium",
+              "Low",
+              "Info",
             ].map(
               (filter) => (
                 <button
@@ -2996,43 +2992,21 @@ function ProbeList({
               </div>
 
               <div className="probe-details">
-                {details}
+  {details}
 
-                {probe?.target_url && (
-                  <div
-                    style={{
-                      marginTop: 5,
-                      color:
-                        "#596579",
-                      fontFamily:
-                        "monospace",
-                      fontSize: 8,
-                    }}
-                  >
-                    {
-                      probe.target_url
-                    }
-                  </div>
-                )}
+  {probe?.target_url && (
+    <div className="probe-target-url">
+      {probe.target_url}
+    </div>
+  )}
 
-                {probe?.status_code !==
-                  undefined &&
-                  probe?.status_code !==
-                    null && (
-                    <div
-                      style={{
-                        marginTop: 5,
-                        color:
-                          "#596579",
-                        fontSize: 8,
-                      }}
-                    >
-                      HTTP{" "}
-                      {
-                        probe.status_code
-                      }
-                    </div>
-                  )}
+                {probe?.status_code !== undefined &&
+  probe?.status_code !== null && (
+    <div className="probe-status-code">
+      HTTP {probe.status_code}
+    </div>
+  )}
+            
               </div>
 
               <div
@@ -3119,32 +3093,42 @@ function getRiskGrade(score) {
 }
 
 function ringStyle(score) {
-  const value =
-    Math.max(
-      0,
-      Math.min(
-        100,
-        Number(score) || 0
-      )
-    );
+  const value = Math.max(
+    0,
+    Math.min(
+      100,
+      Number(score) || 0
+    )
+  );
+
+  const angle = value * 3.6;
+  const markerWidth = 2.5;
+
+  const start = Math.max(
+    0,
+    angle - markerWidth
+  );
+
+  const end = Math.min(
+    360,
+    angle + markerWidth
+  );
 
   return {
-    background: `conic-gradient(
-      from 0deg,
-      #22d3ee 0%,
-      #3b82f6 ${Math.max(
-        1,
-        value
-      )}%,
-      #8b5cf6 ${Math.max(
-        1,
-        value
-      )}%,
-      #151c29 ${Math.max(
-        1,
-        value
-      )}% 100%
-    )`,
+    background: `
+      radial-gradient(
+        circle,
+        #0d121b 0%,
+        #0d121b 56%,
+        transparent 57%
+      ),
+      conic-gradient(
+        from 0deg,
+        #151c29 0deg ${start}deg,
+        #22d3ee ${start}deg ${end}deg,
+        #151c29 ${end}deg 360deg
+      )
+    `,
   };
 }
 

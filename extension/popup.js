@@ -4,10 +4,81 @@
 
 const API_BASE = "http://127.0.0.1:8000";
 
+const MESSAGES = {
 
-// ============================================
-// DOM ELEMENTS
-// ============================================
+    ready: {
+        title: "Ready to scan",
+        detail: "Enter a URL to begin."
+    },
+
+    readyNoAuth: {
+        title: "Ready",
+        detail: "Click START SCAN to authenticate and scan."
+    },
+
+    urlRequired: {
+        title: "URL required",
+        detail: "Enter a website URL before starting the scan."
+    },
+
+    authenticating: {
+        title: "Authenticating",
+        detail: "Logging in to BlindSpot backend..."
+    },
+
+    connecting: {
+        title: "Connecting",
+        detail: "Submitting target to BlindSpot..."
+    },
+
+    scanSubmitted: {
+        title: "Scan submitted",
+        detail: "Scan ID: {scanId}..."
+    },
+
+    scanning: {
+        title: "{status}",
+        detail: "Scan progress: {progress}%"
+    },
+
+    collectingResults: {
+        title: "Collecting results",
+        detail: "Retrieving security findings..."
+    },
+
+    scanCompleted: {
+        title: "Scan completed",
+        detail: "{count} security finding(s) detected."
+    },
+
+    scanFailed: {
+        title: "Scan failed",
+        detail: "Something went wrong."
+    },
+
+    scanTimedOut: "Scan timed out.",
+
+    generatingReport: {
+        title: "Generating report",
+        detail: "Creating your professional AI security assessment PDF..."
+    },
+
+    reportDownloaded: {
+        title: "Report downloaded",
+        detail: "AI security report saved to your Downloads folder."
+    },
+
+    reportFailed: {
+        title: "Report failed",
+        detail: "Could not generate or download the AI report."
+    },
+
+    reportButtonDefault: "Download AI Security Report",
+    reportButtonLoading: "Generating AI Report...",
+
+    scanButtonDefault: "START SCAN",
+    scanButtonLoading: "SCANNING..."
+};
 
 const targetUrl = document.getElementById("targetUrl");
 const scanBtn = document.getElementById("scanBtn");
@@ -24,10 +95,20 @@ const highCount = document.getElementById("highCount");
 
 const reportBtn = document.getElementById("reportBtn");
 
+function fillTemplate(template, values = {}) {
+    return template.replace(/\{(\w+)\}/g, (match, key) =>
+        Object.prototype.hasOwnProperty.call(values, key)
+            ? values[key]
+            : match
+    );
+}
 
-// ============================================
-// HELPERS
-// ============================================
+function setStatusFromMessage(message, values = {}) {
+    setStatus(
+        fillTemplate(message.title, values),
+        fillTemplate(message.detail, values)
+    );
+}
 
 function setStatus(title, detail) {
     statusText.textContent = title;
@@ -38,10 +119,10 @@ function setScanning(scanning) {
     scanBtn.disabled = scanning;
 
     if (scanning) {
-        scanText.textContent = "SCANNING...";
+        scanText.textContent = MESSAGES.scanButtonLoading;
         spinner.classList.remove("hidden");
     } else {
-        scanText.textContent = "START SCAN";
+        scanText.textContent = MESSAGES.scanButtonDefault;
         spinner.classList.add("hidden");
     }
 }
@@ -60,11 +141,6 @@ function getSeverityCount(findings, severity) {
             String(finding.severity || "").toLowerCase() === severity
     ).length;
 }
-
-
-// ============================================
-// AUTH STORAGE
-// ============================================
 
 async function getAuthToken() {
     const data = await chrome.storage.local.get(["authToken"]);
@@ -88,11 +164,6 @@ async function clearAuth() {
         "tokenExpiresIn"
     ]);
 }
-
-
-// ============================================
-// API REQUEST HELPER
-// ============================================
 
 async function apiRequest(path, options = {}) {
 
@@ -137,11 +208,6 @@ async function apiRequest(path, options = {}) {
     return data;
 }
 
-
-// ============================================
-// LOGIN
-// ============================================
-
 async function login(username, password) {
 
     const data = await apiRequest("/api/auth/login", {
@@ -163,11 +229,6 @@ async function login(username, password) {
     return data;
 }
 
-
-// ============================================
-// ENSURE AUTHENTICATION
-// ============================================
-
 async function ensureAuthenticated() {
 
     const existingToken = await getAuthToken();
@@ -176,20 +237,12 @@ async function ensureAuthenticated() {
         return true;
     }
 
-    setStatus(
-        "Authenticating",
-        "Logging in to BlindSpot backend..."
-    );
+    setStatusFromMessage(MESSAGES.authenticating);
 
     await login("admin", "admin123");
 
     return true;
 }
-
-
-// ============================================
-// GET TARGET FROM CURRENT TAB
-// ============================================
 
 async function getCurrentTabUrl() {
 
@@ -215,11 +268,6 @@ async function getCurrentTabUrl() {
     return "";
 }
 
-
-// ============================================
-// SUBMIT SCAN
-// ============================================
-
 async function submitScan(url) {
 
     return await apiRequest("/api/scan", {
@@ -242,11 +290,6 @@ async function submitScan(url) {
     });
 }
 
-
-// ============================================
-// CHECK SCAN STATUS
-// ============================================
-
 async function getScanStatus(scanId) {
 
     return await apiRequest(
@@ -254,22 +297,12 @@ async function getScanStatus(scanId) {
     );
 }
 
-
-// ============================================
-// GET FINAL RESULTS
-// ============================================
-
 async function getScanResults(scanId) {
 
     return await apiRequest(
         `/api/scan/${scanId}/results`
     );
 }
-
-
-// ============================================
-// WAIT FOR SCAN
-// ============================================
 
 async function waitForScan(scanId) {
 
@@ -292,10 +325,10 @@ async function waitForScan(scanId) {
         const progress =
             scan.progress ?? 0;
 
-        setStatus(
-            currentStatus.toUpperCase(),
-            `Scan progress: ${progress}%`
-        );
+        setStatusFromMessage(MESSAGES.scanning, {
+            status: currentStatus.toUpperCase(),
+            progress: progress
+        });
 
         if (currentStatus === "completed") {
             return true;
@@ -314,13 +347,8 @@ async function waitForScan(scanId) {
         );
     }
 
-    throw new Error("Scan timed out.");
+    throw new Error(MESSAGES.scanTimedOut);
 }
-
-
-// ============================================
-// DISPLAY RESULTS
-// ============================================
 
 function displayResults(data) {
 
@@ -351,26 +379,16 @@ function displayResults(data) {
 
     showResults();
 
-    setStatus(
-        "Scan completed",
-        `${findings.length} security finding(s) detected.`
-    );
+    setStatusFromMessage(MESSAGES.scanCompleted, {
+        count: findings.length
+    });
 }
-
-
-// ============================================
-// DOWNLOAD AI PDF SECURITY REPORT
-// ============================================
 
 reportBtn.addEventListener(
     "click",
     async () => {
 
         try {
-
-            // ----------------------------------------
-            // Get last completed scan
-            // ----------------------------------------
 
             const stored =
                 await chrome.storage.local.get([
@@ -388,11 +406,6 @@ reportBtn.addEventListener(
                 );
             }
 
-
-            // ----------------------------------------
-            // Authentication
-            // ----------------------------------------
-
             const token =
                 await getAuthToken();
 
@@ -403,28 +416,12 @@ reportBtn.addEventListener(
                 );
             }
 
-
-            // ----------------------------------------
-            // UI state
-            // ----------------------------------------
-
             reportBtn.disabled = true;
 
-            const originalText =
-                reportBtn.textContent;
-
             reportBtn.textContent =
-                "Generating AI Report...";
+                MESSAGES.reportButtonLoading;
 
-            setStatus(
-                "Generating report",
-                "Creating your professional AI security assessment PDF..."
-            );
-
-
-            // ----------------------------------------
-            // Request AI PDF from backend
-            // ----------------------------------------
+            setStatusFromMessage(MESSAGES.generatingReport);
 
             const response =
                 await fetch(
@@ -438,11 +435,6 @@ reportBtn.addEventListener(
                         }
                     }
                 );
-
-
-            // ----------------------------------------
-            // Handle HTTP errors
-            // ----------------------------------------
 
             if (!response.ok) {
 
@@ -472,11 +464,6 @@ reportBtn.addEventListener(
                 );
             }
 
-
-            // ----------------------------------------
-            // Make sure backend returned PDF
-            // ----------------------------------------
-
             const contentType =
                 response.headers.get(
                     "content-type"
@@ -493,11 +480,6 @@ reportBtn.addEventListener(
                 );
             }
 
-
-            // ----------------------------------------
-            // Read PDF bytes
-            // ----------------------------------------
-
             const pdfBlob =
                 await response.blob();
 
@@ -511,20 +493,10 @@ reportBtn.addEventListener(
                 );
             }
 
-
-            // ----------------------------------------
-            // Create temporary browser URL
-            // ----------------------------------------
-
             const downloadUrl =
                 URL.createObjectURL(
                     pdfBlob
                 );
-
-
-            // ----------------------------------------
-            // Download to Windows Downloads folder
-            // ----------------------------------------
 
             await new Promise(
                 (resolve, reject) => {
@@ -579,11 +551,6 @@ reportBtn.addEventListener(
                 }
             );
 
-
-            // ----------------------------------------
-            // Cleanup
-            // ----------------------------------------
-
             setTimeout(
                 () => {
                     URL.revokeObjectURL(
@@ -593,20 +560,10 @@ reportBtn.addEventListener(
                 10000
             );
 
-
-            // ----------------------------------------
-            // Success
-            // ----------------------------------------
-
-            setStatus(
-                "Report downloaded",
-                "AI security report saved to your Downloads folder."
-            );
-
+            setStatusFromMessage(MESSAGES.reportDownloaded);
 
             reportBtn.textContent =
-                "Download AI Security Report";
-
+                MESSAGES.reportButtonDefault;
 
         } catch (error) {
 
@@ -616,13 +573,13 @@ reportBtn.addEventListener(
             );
 
             setStatus(
-                "Report failed",
+                MESSAGES.reportFailed.title,
                 error.message ||
-                "Could not generate or download the AI report."
+                MESSAGES.reportFailed.detail
             );
 
             reportBtn.textContent =
-                "Download AI Security Report";
+                MESSAGES.reportButtonDefault;
 
         } finally {
 
@@ -631,11 +588,6 @@ reportBtn.addEventListener(
         }
     }
 );
-
-
-// ============================================
-// MAIN SCAN FLOW
-// ============================================
 
 scanBtn.addEventListener(
     "click",
@@ -648,20 +600,12 @@ scanBtn.addEventListener(
 
         if (!url) {
 
-            setStatus(
-                "URL required",
-                "Enter a website URL before starting the scan."
-            );
+            setStatusFromMessage(MESSAGES.urlRequired);
 
             targetUrl.focus();
 
             return;
         }
-
-
-        // ----------------------------------------
-        // URL normalization
-        // ----------------------------------------
 
         if (!/^https?:\/\//i.test(url)) {
             url = "https://" + url;
@@ -671,24 +615,11 @@ scanBtn.addEventListener(
 
         setScanning(true);
 
-
         try {
-
-            // ----------------------------------------
-            // Authentication
-            // ----------------------------------------
 
             await ensureAuthenticated();
 
-
-            // ----------------------------------------
-            // Submit scan
-            // ----------------------------------------
-
-            setStatus(
-                "Connecting",
-                "Submitting target to BlindSpot..."
-            );
+            setStatusFromMessage(MESSAGES.connecting);
 
             const scan =
                 await submitScan(url);
@@ -703,11 +634,6 @@ scanBtn.addEventListener(
                 );
             }
 
-
-            // ----------------------------------------
-            // Save scan immediately
-            // ----------------------------------------
-
             await chrome.storage.local.set({
 
                 lastScanId: scanId,
@@ -716,46 +642,21 @@ scanBtn.addEventListener(
 
             });
 
-
-            setStatus(
-                "Scan submitted",
-                `Scan ID: ${scanId.substring(0, 8)}...`
-            );
-
-
-            // ----------------------------------------
-            // Wait for completion
-            // ----------------------------------------
+            setStatusFromMessage(MESSAGES.scanSubmitted, {
+                scanId: scanId.substring(0, 8)
+            });
 
             await waitForScan(scanId);
 
-
-            // ----------------------------------------
-            // Get final results
-            // ----------------------------------------
-
-            setStatus(
-                "Collecting results",
-                "Retrieving security findings..."
-            );
+            setStatusFromMessage(MESSAGES.collectingResults);
 
             const resultData =
                 await getScanResults(scanId);
-
-
-            // ----------------------------------------
-            // Display results
-            // ----------------------------------------
 
             displayResults(
                 resultData
             );
 
-
-            // ----------------------------------------
-            // Save completed scan
-            // ----------------------------------------
-
             await chrome.storage.local.set({
 
                 lastScanId: scanId,
@@ -763,7 +664,6 @@ scanBtn.addEventListener(
                 lastScanUrl: url
 
             });
-
 
         } catch (error) {
 
@@ -773,9 +673,9 @@ scanBtn.addEventListener(
             );
 
             setStatus(
-                "Scan failed",
+                MESSAGES.scanFailed.title,
                 error.message ||
-                "Something went wrong."
+                MESSAGES.scanFailed.detail
             );
 
         } finally {
@@ -784,11 +684,6 @@ scanBtn.addEventListener(
         }
     }
 );
-
-
-// ============================================
-// INITIALIZE POPUP
-// ============================================
 
 document.addEventListener(
     "DOMContentLoaded",
@@ -799,8 +694,6 @@ document.addEventListener(
         const currentUrl =
             await getCurrentTabUrl();
 
-        // Automatically populate HTTP/HTTPS websites
-
         if (
             currentUrl &&
             /^https?:\/\//i.test(currentUrl)
@@ -810,25 +703,16 @@ document.addEventListener(
                 currentUrl;
         }
 
-
-        // Check authentication
-
         const token =
             await getAuthToken();
 
         if (token) {
 
-            setStatus(
-                "Ready",
-                "Authenticated with BlindSpot backend."
-            );
+            setStatusFromMessage(MESSAGES.ready);
 
         } else {
 
-            setStatus(
-                "Ready",
-                "Click START SCAN to authenticate and scan."
-            );
+            setStatusFromMessage(MESSAGES.readyNoAuth);
         }
     }
 );
