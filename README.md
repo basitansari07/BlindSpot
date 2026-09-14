@@ -23,40 +23,41 @@ BlindSpot combines passive detection rules, Nuclei-based signature scanning, and
 
 ## Project Structure
 
+```
 BlindSpot/
-├── backend/ # FastAPI backend & scanner engine
-│ ├── app.py # Main API server
-│ ├── auth.py # Authentication (JWT)
-│ ├── config.py # App configuration
-│ ├── requirements.txt
-│ ├── demo.sh # Demo/setup helper script
-│ ├── engine/
-│ ├── enrichment/ # CVSS/CVE enrichment
-│ ├── export/ # Report export (e.g. AI PDF reports)
-│ ├── importers/ # Nuclei template importer
-│ ├── scanner/
-│ │ ├── active_scanner.py
-│ │ ├── passive_scanner.py
-│ │ └── scan_manager.py
-│ ├── storage/
-│ └── ai/ # AI report generation
+├── backend/                 # FastAPI backend & scanner engine
+│   ├── app.py                # Main API server
+│   ├── auth.py                # Authentication (JWT)
+│   ├── config.py              # App configuration
+│   ├── requirements.txt
+│   ├── demo.sh                # Demo/setup helper script
+│   ├── engine/
+│   ├── enrichment/            # CVSS/CVE enrichment
+│   ├── export/                # Report export (e.g. AI PDF reports)
+│   ├── importers/             # Nuclei template importer
+│   ├── scanner/
+│   │   ├── active_scanner.py
+│   │   ├── passive_scanner.py
+│   │   └── scan_manager.py
+│   ├── storage/
+│   └── ai/                    # AI report generation
 ├── data/
-│ ├── nuclei-templates/
-│ └── safe_versions.json
+│   ├── nuclei-templates/
+│   └── safe_versions.json
 ├── rules/
-│ ├── scan_rules.json
-│ └── correlation_rules.json
-├── extension/ # Browser extension (Manifest V3)
-│ ├── manifest.json
-│ ├── background.js
-│ ├── popup.html / popup.js / popup.css
-│ └── icons/
-└── web_frontend/ # Web dashboard (React + Vite)
-├── src/
-├── public/
-├── package.json
-└── vite.config.js
-
+│   ├── scan_rules.json
+│   └── correlation_rules.json
+├── extension/                # Browser extension (Manifest V3)
+│   ├── manifest.json
+│   ├── background.js
+│   ├── popup.html / popup.js / popup.css
+│   └── icons/
+└── web_frontend/              # Web dashboard (React + Vite)
+    ├── src/
+    ├── public/
+    ├── package.json
+    └── vite.config.js
+```
 
 ## Getting Started
 
