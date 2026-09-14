@@ -1,36 +1,40 @@
 """
-active_checks.py — Active Vulnerability Probes
+active_scanner.py — Active Vulnerability Probes
+
 Non-destructive active probes that verify vulnerabilities by injecting
-safe canary payloads into discovered parameters.
+safe test payloads into discovered parameters.
 
 Probe Types:
-  1. Reflected XSS Canary — detects unescaped parameter reflection
-  2. Error-Based SQLi     — detects database error on quote injection
-  3. Time-Based Blind SQLi— detects blind injection via response delay
-  4. Local File Inclusion  — detects path traversal on file-like params
-  5. CRLF / Header Inject — detects header injection via CRLF sequences
-  6. Open Redirect        — detects unvalidated redirect-target parameters
+  1. Reflected XSS Canary
+  2. Error-Based SQL Injection
+  3. Time-Based Blind SQL Injection
+  4. Local File Inclusion / Path Traversal
+  5. CRLF / Header Injection
+  6. Open Redirect
 
-All probes are rate-limited and use the existing synchronous Fetcher.
-Probes across multiple parameters are run concurrently via a ThreadPoolExecutor.
-Supports both GET query parameter injection and POST body form injection.
+All probes use the existing async Fetcher.
+Supports GET query parameter injection and POST body form injection.
 """
 
 import re
 import uuid
+
+from scanner.rule_scanner import Finding
 import time
+import asyncio
 import logging
+
 from datetime import datetime, timezone
 from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from scanner.request_handler import Fetcher
-from scanner.rule_scanner import Finding
-from scanner.surface_mapper import AttackSurface, ParamTarget
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+sys.path.insert(
+    0,
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+
 from config import (
     ACTIVE_REQUEST_DELAY,
     MAX_ACTIVE_PROBES_PER_TARGET,
@@ -42,7 +46,10 @@ from config import (
 logger = logging.getLogger(__name__)
 
 
-# ═══ Blind SQLi Payloads ═════════════════════════════════════
+# ═══════════════════════════════════════════════════════════
+# BLIND SQLi PAYLOADS
+# ═══════════════════════════════════════════════════════════
+
 BLIND_SQLI_PAYLOADS = [
     ("' OR SLEEP({sleep})-- ", "MySQL SLEEP"),
     ("' OR pg_sleep({sleep})-- ", "PostgreSQL pg_sleep"),
@@ -50,7 +57,10 @@ BLIND_SQLI_PAYLOADS = [
 ]
 
 
-# ── SQL Error Signatures (reused from passive_checks) ─────
+# ═══════════════════════════════════════════════════════════
+# SQL ERROR SIGNATURES
+# ═══════════════════════════════════════════════════════════
+
 SQL_ERROR_PATTERNS = [
     r"you have an error in your sql syntax",
     r"unclosed quotation mark",
@@ -66,31 +76,69 @@ SQL_ERROR_PATTERNS = [
     r"quoted string not properly terminated",
 ]
 
-# ── LFI Success Patterns ──────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════
+# LFI / PATH TRAVERSAL INDICATORS
+# ═══════════════════════════════════════════════════════════
+
+# IMPORTANT:
+# Generic strings such as "localhost" are intentionally NOT used.
+# They are too common and produce false positives.
+
 LFI_INDICATORS = [
-    r"root:x:0:0:",              # /etc/passwd
-    r"\[fonts\]",                # win.ini
-    r"\[extensions\]",           # win.ini
-    r";\s*for\s+16-bit\s+app",   # win.ini comment
-    r"localhost",                 # /etc/hosts
+    r"root:x:0:0:[^<\r\n]*",
+    r"\[fonts\]",
+    r"\[extensions\]",
+    r";\s*for\s+16-bit\s+app",
+    r"daemon:x:\d+:\d+:",
+    r"nobody:x:\d+:\d+:",
 ]
 
-# LFI payloads
+
 LFI_PAYLOADS = [
     "../../../../etc/passwd",
     "..\\..\\..\\..\\windows\\win.ini",
     "....//....//....//....//etc/passwd",
 ]
 
-# ── Open Redirect: parameter names worth testing ──────────
+
+# ═══════════════════════════════════════════════════════════
+# OPEN REDIRECT PARAMETER NAMES
+# ═══════════════════════════════════════════════════════════
+
 OPEN_REDIRECT_PARAM_NAMES = {
-    "url", "redirect", "next", "callback", "dest", "destination",
-    "uri", "target", "return", "return_to", "returnto", "goto",
-    "link", "redirect_uri", "redirect_url", "continue", "forward", "out",
+    "url",
+    "redirect",
+    "next",
+    "callback",
+    "dest",
+    "destination",
+    "uri",
+    "target",
+    "return",
+    "return_to",
+    "returnto",
+    "goto",
+    "link",
+    "redirect_uri",
+    "redirect_url",
+    "continue",
+    "forward",
+    "out",
 }
 
 
-def run_active_probes(
+# ═══════════════════════════════════════════════════════════
+# MAIN ACTIVE SCANNER
+# ═══════════════════════════════════════════════════════════
+
+def run_active_probes(fetcher, surface, scan_id, scan_mode="full_active"):
+    return asyncio.run(
+        _run_active_probes_async(fetcher, surface, scan_id, scan_mode)
+    )
+
+
+async def _run_active_probes_async(
     fetcher: Fetcher,
     surface: AttackSurface,
     scan_id: str,
@@ -98,15 +146,19 @@ def run_active_probes(
 ) -> tuple:
     """
     Run active probes against discovered attack surface.
-    Probes for each parameter run in a worker thread; multiple
-    parameters are probed concurrently via ThreadPoolExecutor.
-    Returns a tuple: (findings: list, probe_logs: list)
+
+    Returns:
+        (findings, probe_logs)
     """
+
     findings = []
     probe_logs = []
 
     if not surface.params:
-        logger.info(f"[Active {scan_id[:8]}] No parameters found — skipping active probes")
+        logger.info(
+            f"[Active {scan_id[:8]}] "
+            f"No parameters found — skipping active probes"
+        )
         return findings, probe_logs
 
     logger.info(
@@ -114,78 +166,176 @@ def run_active_probes(
         f"{len(surface.params)} parameters"
     )
 
-    def _probe_param(param):
+    async def _probe_param(param):
         param_findings = []
         param_logs = []
 
-        is_post = (param.source == "form_post")
+        is_post = param.source == "form_post"
 
-        # Probe 1: XSS
-        res_finding, log_item = _probe_xss(fetcher, param, scan_id, use_post=is_post)
-        if log_item: param_logs.append(log_item)
-        if res_finding: param_findings.append(res_finding)
+        # ---------------------------------------------------
+        # Probe 1: Reflected XSS
+        # ---------------------------------------------------
 
-        # Probe 2: SQLi
-        res_finding, log_item = _probe_sqli(fetcher, param, scan_id, use_post=is_post)
-        if log_item: param_logs.append(log_item)
-        if res_finding: param_findings.append(res_finding)
+        res_finding, log_item = await _probe_xss(
+            fetcher,
+            param,
+            scan_id,
+            use_post=is_post,
+        )
+
+        if log_item:
+            param_logs.append(log_item)
+
+        if res_finding:
+            param_findings.append(res_finding)
+
+        # ---------------------------------------------------
+        # Probe 2: Error-Based SQLi
+        # ---------------------------------------------------
+
+        res_finding, log_item = await _probe_sqli(
+            fetcher,
+            param,
+            scan_id,
+            use_post=is_post,
+        )
+
+        if log_item:
+            param_logs.append(log_item)
+
+        if res_finding:
+            param_findings.append(res_finding)
+
+        # ---------------------------------------------------
+        # Full Active Only
+        # ---------------------------------------------------
 
         if scan_mode == "full_active":
-            # Probe 3: Blind SQLi (time-based)
-            res_finding, log_item = _probe_blind_sqli(fetcher, param, scan_id, use_post=is_post)
-            if log_item: param_logs.append(log_item)
-            if res_finding: param_findings.append(res_finding)
+
+            # Probe 3: Time-Based Blind SQLi
+            res_finding, log_item = await _probe_blind_sqli(
+                fetcher,
+                param,
+                scan_id,
+                use_post=is_post,
+            )
+
+            if log_item:
+                param_logs.append(log_item)
+
+            if res_finding:
+                param_findings.append(res_finding)
 
             # Probe 4: LFI
             if param.is_file_param:
-                res_finding, log_item = _probe_lfi(fetcher, param, scan_id, use_post=is_post)
-                if log_item: param_logs.append(log_item)
-                if res_finding: param_findings.append(res_finding)
+
+                res_finding, log_item = await _probe_lfi(
+                    fetcher,
+                    param,
+                    scan_id,
+                    use_post=is_post,
+                )
+
+                if log_item:
+                    param_logs.append(log_item)
+
+                if res_finding:
+                    param_findings.append(res_finding)
 
             # Probe 5: CRLF
-            res_finding, log_item = _probe_crlf(fetcher, param, scan_id, use_post=is_post)
-            if log_item: param_logs.append(log_item)
-            if res_finding: param_findings.append(res_finding)
+            res_finding, log_item = await _probe_crlf(
+                fetcher,
+                param,
+                scan_id,
+                use_post=is_post,
+            )
+
+            if log_item:
+                param_logs.append(log_item)
+
+            if res_finding:
+                param_findings.append(res_finding)
 
             # Probe 6: Open Redirect
-            res_finding, log_item = _probe_open_redirect(fetcher, param, scan_id)
-            if log_item: param_logs.append(log_item)
-            if res_finding: param_findings.append(res_finding)
+            res_finding, log_item = await _probe_open_redirect(
+                fetcher,
+                param,
+                scan_id,
+            )
+
+            if log_item:
+                param_logs.append(log_item)
+
+            if res_finding:
+                param_findings.append(res_finding)
 
         return param_findings, param_logs
 
-    params_to_probe = surface.params[:MAX_ACTIVE_PROBES_PER_TARGET]
+    params_to_probe = surface.params[
+        :MAX_ACTIVE_PROBES_PER_TARGET
+    ]
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(_probe_param, p): p for p in params_to_probe}
-        for future in as_completed(futures):
-            try:
-                p_findings, p_logs = future.result()
-                findings.extend(p_findings)
-                probe_logs.extend(p_logs)
-            except Exception as e:
-                logger.debug(f"[Active {scan_id[:8]}] Probe thread error: {e}")
+    results = await asyncio.gather(
+        *[_probe_param(p) for p in params_to_probe],
+        return_exceptions=True,
+    )
+
+    for item in results:
+
+        if isinstance(item, tuple) and len(item) == 2:
+
+            p_findings, p_logs = item
+
+            findings.extend(p_findings)
+            probe_logs.extend(p_logs)
+
+        elif isinstance(item, Exception):
+
+            logger.debug(
+                f"[Active {scan_id[:8]}] "
+                f"Probe task error: {item}"
+            )
 
     logger.info(
-        f"[Active {scan_id[:8]}] Completed probes on {len(params_to_probe)} params, "
-        f"executed {len(probe_logs)} probes, found {len(findings)} active findings"
+        f"[Active {scan_id[:8]}] Completed probes on "
+        f"{len(params_to_probe)} params, "
+        f"executed {len(probe_logs)} probes, "
+        f"found {len(findings)} active findings"
     )
 
     return findings, probe_logs
 
 
 # ═══════════════════════════════════════════════════════════
-#  PROBE IMPLEMENTATIONS
+# PROBE 1 — REFLECTED XSS
 # ═══════════════════════════════════════════════════════════
 
-def _probe_xss(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
-    canary = f"{ACTIVE_XSS_CANARY}_{uuid.uuid4().hex[:8]}'\"><"
-    probe_url, post_data = _prepare_injection(param, canary, use_post=use_post)
+async def _probe_xss(
+    fetcher: Fetcher,
+    param: ParamTarget,
+    scan_id: str,
+    use_post: bool = False,
+):
+
+    canary = (
+        f"{ACTIVE_XSS_CANARY}_"
+        f"{uuid.uuid4().hex[:8]}"
+        f"'\">"
+    )
+
+    probe_url, post_data = _prepare_injection(
+        param,
+        canary,
+        use_post=use_post,
+    )
+
     if not probe_url:
         return None, None
 
     method_str = "POST" if use_post else "GET"
+
     finding = None
+
     log_item = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "param_name": param.param_name,
@@ -194,62 +344,123 @@ def _probe_xss(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: boo
         "payload": canary,
         "status_code": 0,
         "vulnerable": False,
-        "details": "Input sanitized or omitted from HTML body (Safe)"
+        "details": (
+            "Input sanitized or omitted from HTML body (Safe)"
+        ),
     }
 
     try:
+
         if use_post:
-            result = fetcher.fetch_post(probe_url, data=post_data, timeout=3)
+
+            result = fetcher.fetch_post(
+                probe_url,
+                data=post_data,
+                timeout=3,
+            )
+
         else:
-            result = fetcher.fetch(probe_url, timeout=3)
+
+            result = fetcher.fetch(
+                probe_url,
+                timeout=3,
+            )
+
+        if not result:
+            return None, log_item
 
         log_item["status_code"] = result.status_code
-        if result.body and canary in result.body:
+
+        body = result.body or ""
+
+        if canary in body:
+
             log_item["vulnerable"] = True
-            log_item["details"] = "Unescaped Canary string reflected verbatim in HTML response body"
+
+            log_item["details"] = (
+                "Unescaped canary string reflected "
+                "verbatim in response body"
+            )
+
             evidence_log = (
-                f"[ACTIVE PROBE EXECUTION LOG]\n"
-                f"METHOD & TARGET : {method_str} {probe_url}\n"
-                f"POST DATA       : {post_data if use_post else 'N/A'}\n"
+                "[ACTIVE PROBE EXECUTION LOG]\n"
+                f"METHOD & TARGET : "
+                f"{method_str} {probe_url}\n"
+                f"POST DATA       : "
+                f"{post_data if use_post else 'N/A'}\n"
                 f"PAYLOAD INJECTED: {canary}\n"
                 f"HTTP STATUS     : {result.status_code}\n"
-                f"VERIFICATION    : Unescaped Canary string reflected verbatim in HTML response body."
+                "VERIFICATION    : "
+                "Unescaped canary string reflected "
+                "verbatim in HTML response body."
             )
+
             finding = _make_finding(
                 scan_id=scan_id,
                 target_url=probe_url,
-                title=f"Reflected XSS — Parameter '{param.param_name}' ({method_str})",
+                title=(
+                    f"Reflected XSS — Parameter "
+                    f"'{param.param_name}' ({method_str})"
+                ),
                 description=(
-                    f"The parameter '{param.param_name}' ({method_str}) reflects user input without "
-                    f"HTML encoding. The injected canary string '{canary}' appeared "
-                    f"verbatim in the response body, confirming a Cross-Site Scripting "
-                    f"(XSS) vulnerability."
+                    f"The parameter '{param.param_name}' "
+                    f"({method_str}) reflected the injected "
+                    f"canary without HTML encoding. "
+                    f"The exact canary appeared in the "
+                    f"response body."
                 ),
                 severity="high",
-                owasp="A05:2025-Injection",
+                owasp="A03:2021-Injection",
                 cwe="CWE-79",
                 evidence=evidence_log,
                 remediation=(
-                    "Encode all user input before rendering in HTML output. "
-                    "Use context-aware output encoding (HTML entity, URL, JS encoding). "
-                    "Implement Content-Security-Policy header as defense-in-depth."
+                    "Encode user-controlled data according to "
+                    "its output context before rendering. "
+                    "Use context-aware output encoding and "
+                    "CSP as defense-in-depth."
                 ),
             )
+
     except Exception as e:
-        logger.debug(f"[XSS Probe] Error on {param.param_name}: {e}")
-        log_item["details"] = f"Network/Timeout error: {e}"
+
+        logger.debug(
+            f"[XSS Probe] Error on "
+            f"{param.param_name}: {e}"
+        )
+
+        log_item["details"] = (
+            f"Network/Timeout error: {e}"
+        )
 
     return finding, log_item
 
 
-def _probe_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
-    payload = param.param_value + "'"
-    probe_url, post_data = _prepare_injection(param, payload, use_post=use_post)
+# ═══════════════════════════════════════════════════════════
+# PROBE 2 — ERROR-BASED SQLi
+# ═══════════════════════════════════════════════════════════
+
+async def _probe_sqli(
+    fetcher: Fetcher,
+    param: ParamTarget,
+    scan_id: str,
+    use_post: bool = False,
+):
+
+    payload = f"{param.param_value}'"
+
+    probe_url, post_data = _prepare_injection(
+        param,
+        payload,
+        use_post=use_post,
+    )
+
     if not probe_url:
         return None, None
 
     method_str = "POST" if use_post else "GET"
+
     finding = None
+
     log_item = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "param_name": param.param_name,
@@ -258,71 +469,129 @@ def _probe_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bo
         "payload": payload,
         "status_code": 0,
         "vulnerable": False,
-        "details": "No database error signature detected in response (Safe)"
+        "details": (
+            "No database error signature detected "
+            "in response (Safe)"
+        ),
     }
 
     try:
-        if use_post:
-            result = fetcher.fetch_post(probe_url, data=post_data, timeout=3)
-        else:
-            result = fetcher.fetch(probe_url, timeout=3)
 
-        if result:
-            log_item["status_code"] = result.status_code
-        if result and result.body:
-            body_lower = result.body.lower()
-            for pattern in SQL_ERROR_PATTERNS:
-                match = re.search(pattern, body_lower)
-                if match:
-                    log_item["vulnerable"] = True
-                    log_item["details"] = f"Database error matched signature: '{match.group(0)[:100]}'"
-                    evidence_log = (
-                        f"[ACTIVE PROBE EXECUTION LOG]\n"
-                        f"METHOD & TARGET : {method_str} {probe_url}\n"
-                        f"POST DATA       : {post_data if use_post else 'N/A'}\n"
-                        f"PAYLOAD INJECTED: {payload}\n"
-                        f"HTTP STATUS     : {result.status_code}\n"
-                        f"VERIFICATION    : Database error matched signature: '{match.group(0)[:120]}'"
-                    )
-                    finding = _make_finding(
-                        scan_id=scan_id,
-                        target_url=probe_url,
-                        title=f"SQL Injection — Parameter '{param.param_name}' ({method_str})",
-                        description=(
-                            f"Appending a single quote (') to the '{param.param_name}' parameter ({method_str}) "
-                            f"triggered a database error in the response, confirming a SQL injection "
-                            f"vulnerability. Error signature: {match.group(0)[:100]}"
-                        ),
-                        severity="critical",
-                        owasp="A05:2025-Injection",
-                        cwe="CWE-89",
-                        evidence=evidence_log,
-                        remediation=(
-                            "Use parameterized queries (prepared statements) for ALL database operations. "
-                            "Never concatenate user input into SQL strings. "
-                            "Apply input validation and use an ORM where possible."
-                        ),
-                    )
-                    break
+        if use_post:
+
+            result = fetcher.fetch_post(
+                probe_url,
+                data=post_data,
+                timeout=3,
+            )
+
+        else:
+
+            result = fetcher.fetch(
+                probe_url,
+                timeout=3,
+            )
+
+        if not result:
+            return None, log_item
+
+        log_item["status_code"] = result.status_code
+
+        body = result.body or ""
+
+        if not body:
+            return None, log_item
+
+        body_lower = body.lower()
+
+        for pattern in SQL_ERROR_PATTERNS:
+
+            match = re.search(
+                pattern,
+                body_lower,
+            )
+
+            if not match:
+                continue
+
+            log_item["vulnerable"] = True
+
+            matched_signature = match.group(0)[:120]
+
+            log_item["details"] = (
+                "Database error matched signature: "
+                f"'{matched_signature}'"
+            )
+
+            evidence_log = (
+                "[ACTIVE PROBE EXECUTION LOG]\n"
+                f"METHOD & TARGET : "
+                f"{method_str} {probe_url}\n"
+                f"POST DATA       : "
+                f"{post_data if use_post else 'N/A'}\n"
+                f"PAYLOAD INJECTED: {payload}\n"
+                f"HTTP STATUS     : {result.status_code}\n"
+                f"VERIFICATION    : Database error matched "
+                f"signature: '{matched_signature}'"
+            )
+
+            finding = _make_finding(
+                scan_id=scan_id,
+                target_url=probe_url,
+                title=(
+                    f"SQL Injection — Parameter "
+                    f"'{param.param_name}' ({method_str})"
+                ),
+                description=(
+                    f"Appending a single quote to the "
+                    f"'{param.param_name}' parameter caused "
+                    f"a database error signature to appear "
+                    f"in the response."
+                ),
+                severity="critical",
+                owasp="A03:2021-Injection",
+                cwe="CWE-89",
+                evidence=evidence_log,
+                remediation=(
+                    "Use parameterized queries or prepared "
+                    "statements for database operations. "
+                    "Never concatenate user input into SQL."
+                ),
+            )
+
+            break
+
     except Exception as e:
-        logger.debug(f"[SQLi Probe] Error on {param.param_name}: {e}")
-        log_item["details"] = f"Network/Timeout error: {e}"
+
+        logger.debug(
+            f"[SQLi Probe] Error on "
+            f"{param.param_name}: {e}"
+        )
+
+        log_item["details"] = (
+            f"Network/Timeout error: {e}"
+        )
 
     return finding, log_item
 
 
-def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
-    """
-    Time-Based Blind SQLi probe.
+# ═══════════════════════════════════════════════════════════
+# PROBE 3 — TIME-BASED BLIND SQLi
+# ═══════════════════════════════════════════════════════════
 
-    Timeout is always inconclusive.
-    Multiple benign baselines reduce timing noise.
-    A finding requires both absolute and relative delay thresholds.
-    """
+async def _probe_blind_sqli(
+    fetcher: Fetcher,
+    param: ParamTarget,
+    scan_id: str,
+    use_post: bool = False,
+):
+
     method_str = "POST" if use_post else "GET"
 
-    baseline_url, _ = _prepare_injection(
-        param, "mapper_baseline_1", use_post=use_post
+    baseline_url, baseline_post = _prepare_injection(
+        param,
+        "mapper_baseline_1",
+        use_post=use_post,
     )
 
     if not baseline_url:
@@ -330,34 +599,62 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
 
     baseline_samples = []
 
-    for value in ("mapper_baseline_1", "mapper_baseline_2"):
+    # Two baselines reduce timing noise.
+    for baseline_value in (
+        "mapper_baseline_1",
+        "mapper_baseline_2",
+    ):
+
         test_url, test_post = _prepare_injection(
-            param, value, use_post=use_post
+            param,
+            baseline_value,
+            use_post=use_post,
         )
 
         if not test_url:
             continue
 
         try:
+
             started = time.monotonic()
 
             if use_post:
-                fetcher.fetch_post(test_url, data=test_post, timeout=8)
-            else:
-                fetcher.fetch(test_url, timeout=8)
 
-            baseline_samples.append(time.monotonic() - started)
+                fetcher.fetch_post(
+                    test_url,
+                    data=test_post,
+                    timeout=8,
+                )
+
+            else:
+
+                fetcher.fetch(
+                    test_url,
+                    timeout=8,
+                )
+
+            baseline_samples.append(
+                time.monotonic() - started
+            )
 
         except Exception as e:
+
             logger.debug(
-                f"[Blind SQLi] Baseline error on {param.param_name}: {e}"
+                f"[Blind SQLi] Baseline error on "
+                f"{param.param_name}: {e}"
             )
 
     if not baseline_samples:
+
         return None, {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(
+                timezone.utc
+            ).isoformat(),
             "param_name": param.param_name,
-            "probe_type": f"Time-Based Blind SQLi ({method_str})",
+            "probe_type": (
+                f"Time-Based Blind SQLi "
+                f"({method_str})"
+            ),
             "target_url": baseline_url,
             "payload": None,
             "status_code": 0,
@@ -369,6 +666,7 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
         }
 
     baseline_time = max(baseline_samples)
+
     last_log = None
 
     for payload_template, db_label in BLIND_SQLI_PAYLOADS:
@@ -378,17 +676,22 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
         )
 
         probe_url, post_data = _prepare_injection(
-            param, payload, use_post=use_post
+            param,
+            payload,
+            use_post=use_post,
         )
 
         if not probe_url:
             continue
 
         log_item = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(
+                timezone.utc
+            ).isoformat(),
             "param_name": param.param_name,
             "probe_type": (
-                f"Time-Based Blind SQLi ({db_label}) ({method_str})"
+                f"Time-Based Blind SQLi "
+                f"({db_label}) ({method_str})"
             ),
             "target_url": probe_url,
             "payload": payload,
@@ -396,34 +699,48 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
             "vulnerable": False,
             "details": (
                 f"Baseline max: {baseline_time:.2f}s — "
-                f"Testing for delayed response"
+                "Testing for delayed response"
             ),
         }
 
         last_log = log_item
 
         try:
+
             started = time.monotonic()
 
             if use_post:
+
                 result = fetcher.fetch_post(
                     probe_url,
                     data=post_data,
-                    timeout=BLIND_SQLI_SLEEP_SECONDS + 5,
+                    timeout=(
+                        BLIND_SQLI_SLEEP_SECONDS + 5
+                    ),
                 )
+
             else:
+
                 result = fetcher.fetch(
                     probe_url,
-                    timeout=BLIND_SQLI_SLEEP_SECONDS + 5,
+                    timeout=(
+                        BLIND_SQLI_SLEEP_SECONDS + 5
+                    ),
                 )
 
             elapsed = time.monotonic() - started
 
             if result:
-                log_item["status_code"] = result.status_code
+                log_item["status_code"] = (
+                    result.status_code
+                )
 
-            delay_delta = elapsed - baseline_time
+            delay_delta = (
+                elapsed - baseline_time
+            )
 
+            # Require BOTH an absolute delay and a
+            # relative increase over the baseline.
             required_minimum = max(
                 baseline_time * 2.0,
                 baseline_time + 1.0,
@@ -433,6 +750,7 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
                 delay_delta >= BLIND_SQLI_THRESHOLD
                 and elapsed >= required_minimum
             ):
+
                 log_item["vulnerable"] = True
 
                 log_item["details"] = (
@@ -442,26 +760,58 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
                     f"Blind SQLi ({db_label}) CONFIRMED"
                 )
 
-                evidence_log = chr(10).join([
+                evidence_log = "\n".join([
                     "[ACTIVE PROBE EXECUTION LOG]",
-                    f"Probe Type: Time-Based Blind SQLi ({db_label}) ({method_str})",
+                    (
+                        f"Probe Type: Time-Based Blind SQLi "
+                        f"({db_label}) ({method_str})"
+                    ),
                     f"Target: {probe_url}",
-                    f"POST Data: {post_data if use_post else 'N/A'}",
+                    (
+                        f"POST Data: "
+                        f"{post_data if use_post else 'N/A'}"
+                    ),
                     f"Payload: {payload}",
-                    f"Baseline Samples: {', '.join(f'{x:.2f}s' for x in baseline_samples)}",
-                    f"Baseline Max: {baseline_time:.2f}s",
-                    f"Probed Response: {elapsed:.2f}s",
-                    f"Delta: +{delay_delta:.2f}s",
-                    f"Required Delta: {BLIND_SQLI_THRESHOLD:.2f}s",
-                    f"Required Minimum Response: {required_minimum:.2f}s",
-                    "Verdict: VULNERABLE — Significant delayed response confirmed",
+                    (
+                        "Baseline Samples: "
+                        + ", ".join(
+                            f"{x:.2f}s"
+                            for x in baseline_samples
+                        )
+                    ),
+                    (
+                        f"Baseline Max: "
+                        f"{baseline_time:.2f}s"
+                    ),
+                    (
+                        f"Probed Response: "
+                        f"{elapsed:.2f}s"
+                    ),
+                    (
+                        f"Delta: "
+                        f"+{delay_delta:.2f}s"
+                    ),
+                    (
+                        f"Required Delta: "
+                        f"{BLIND_SQLI_THRESHOLD:.2f}s"
+                    ),
+                    (
+                        f"Required Minimum Response: "
+                        f"{required_minimum:.2f}s"
+                    ),
+                    (
+                        "Verdict: VULNERABLE — "
+                        "Significant delayed response confirmed"
+                    ),
                 ])
 
                 finding = Finding(
                     id=str(uuid.uuid4()),
                     scan_id=scan_id,
                     target_url=probe_url,
-                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    timestamp=datetime.now(
+                        timezone.utc
+                    ).isoformat(),
                     source_tool="active_probe",
                     type="vulnerability",
                     severity="critical",
@@ -470,19 +820,23 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
                         f"({db_label}) ({method_str})"
                     ),
                     description=(
-                        f"Parameter '{param.param_name}' ({method_str}) "
-                        f"produced a significant server-side response "
-                        f"delay using a {db_label} time-delay payload. "
+                        f"Parameter '{param.param_name}' "
+                        f"({method_str}) produced a significant "
+                        f"server-side response delay using "
+                        f"a {db_label} time-delay payload. "
                         f"Observed response: {elapsed:.2f}s; "
                         f"baseline: {baseline_time:.2f}s; "
                         f"delta: +{delay_delta:.2f}s."
                     ),
-                    owasp_category="A05:2025-Injection",
+                    owasp_category=(
+                        "A03:2021-Injection"
+                    ),
                     cwe="CWE-89",
                     evidence_location="response_time",
                     evidence_snippet=evidence_log,
                     remediation=(
-                        "Use parameterized queries / prepared statements. "
+                        "Use parameterized queries / "
+                        "prepared statements. "
                         "Never concatenate user input into SQL."
                     ),
                 )
@@ -493,344 +847,633 @@ def _probe_blind_sqli(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_po
                 f"Response: {elapsed:.2f}s "
                 f"(baseline max {baseline_time:.2f}s, "
                 f"delta +{delay_delta:.2f}s) — "
-                f"Below confirmation threshold; Safe"
+                "Below confirmation threshold; Safe"
             )
+
+        except asyncio.TimeoutError:
+
+            # CRITICAL:
+            # Timeout is NOT a vulnerability by itself.
+            log_item["vulnerable"] = False
+
+            log_item["details"] = (
+                f"Request timed out after "
+                f"{BLIND_SQLI_SLEEP_SECONDS + 5}s "
+                f"(baseline max {baseline_time:.2f}s) — "
+                "inconclusive; timeout alone is NOT "
+                "treated as Blind SQLi"
+            )
+
+            logger.debug(
+                f"[Blind SQLi] Timeout on "
+                f"{param.param_name} ({db_label}) — "
+                "not counted as vulnerability"
+            )
+
+            continue
 
         except Exception as e:
 
-            err = str(e).lower()
-
-            if "timeout" in err or "timed out" in err:
-                log_item["vulnerable"] = False
-                log_item["details"] = (
-                    f"Request timed out after the probe timeout window "
-                    f"(baseline max {baseline_time:.2f}s) — "
-                    f"inconclusive; timeout alone is NOT treated "
-                    f"as Blind SQLi"
-                )
-
-                logger.debug(
-                    f"[Blind SQLi] Timeout on "
-                    f"{param.param_name} ({db_label}) — "
-                    f"not counted as vulnerability"
-                )
-
-                continue
-
-            log_item["details"] = f"Network error: {e}"
-
             logger.debug(
                 f"[Blind SQLi] Error on "
-                f"{param.param_name} ({db_label}): {e}"
+                f"{param.param_name} "
+                f"({db_label}): {e}"
+            )
+
+            log_item["details"] = (
+                f"Network error: {e}"
             )
 
     return None, last_log
 
-def _probe_lfi(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
+
+# ═══════════════════════════════════════════════════════════
+# PROBE 4 — LFI / PATH TRAVERSAL
+# ═══════════════════════════════════════════════════════════
+
+async def _probe_lfi(
+    fetcher: Fetcher,
+    param: ParamTarget,
+    scan_id: str,
+    use_post: bool = False,
+):
+
     method_str = "POST" if use_post else "GET"
-    finding = None
+
     last_log = None
 
     for payload in LFI_PAYLOADS:
-        probe_url, post_data = _prepare_injection(param, payload, use_post=use_post)
+
+        probe_url, post_data = _prepare_injection(
+            param,
+            payload,
+            use_post=use_post,
+        )
+
         if not probe_url:
             continue
 
         log_item = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(
+                timezone.utc
+            ).isoformat(),
             "param_name": param.param_name,
-            "probe_type": f"Path Traversal (LFI) ({method_str})",
+            "probe_type": (
+                f"Path Traversal (LFI) "
+                f"({method_str})"
+            ),
             "target_url": probe_url,
             "payload": payload,
             "status_code": 0,
             "vulnerable": False,
-            "details": "System file patterns not included in response (Safe)"
+            "details": (
+                "No strong system-file signature "
+                "detected in response (Safe)"
+            ),
         }
+
         last_log = log_item
 
         try:
+
             if use_post:
-                result = fetcher.fetch_post(probe_url, data=post_data, timeout=3)
+
+                result = fetcher.fetch_post(
+                    probe_url,
+                    data=post_data,
+                    timeout=3,
+                )
+
             else:
-                result = fetcher.fetch(probe_url, timeout=3)
 
-            if result:
-                log_item["status_code"] = result.status_code
-            if result and result.body:
-                body_lower = result.body.lower()
-                for pattern in LFI_INDICATORS:
-                    match = re.search(pattern, body_lower)
-                    if match:
-                        log_item["vulnerable"] = True
-                        log_item["details"] = f"Path traversal matched indicator: '{match.group(0)[:100]}'"
-                        evidence_log = (
-                            f"[ACTIVE PROBE EXECUTION LOG]\n"
-                            f"METHOD & TARGET : {method_str} {probe_url}\n"
-                            f"POST DATA       : {post_data if use_post else 'N/A'}\n"
-                            f"PAYLOAD INJECTED: {payload}\n"
-                            f"HTTP STATUS     : {result.status_code}\n"
-                            f"VERIFICATION    : Path traversal matched indicator: '{match.group(0)[:120]}'"
-                        )
-                        finding = _make_finding(
-                            scan_id=scan_id,
-                            target_url=probe_url,
-                            title=f"Local File Inclusion — Parameter '{param.param_name}' ({method_str})",
-                            description=(
-                                f"The parameter '{param.param_name}' ({method_str}) is vulnerable to path traversal. "
-                                f"The payload '{payload}' caused the server to include a local system "
-                                f"file in its response. Matched indicator: {match.group(0)[:100]}"
-                            ),
-                            severity="critical",
-                            owasp="A01:2025-Broken Access Control",
-                            cwe="CWE-22",
-                            evidence=evidence_log,
-                            remediation=(
-                                "Never use user input directly in file system operations. "
-                                "Use a whitelist of allowed file paths. "
-                                "Apply chroot or sandboxed file access. "
-                                "Remove directory traversal sequences (../, ..\\ ) from input."
-                            ),
-                        )
-                        return finding, log_item
+                result = fetcher.fetch(
+                    probe_url,
+                    timeout=3,
+                )
+
+            if not result:
+                continue
+
+            log_item["status_code"] = (
+                result.status_code
+            )
+
+            body = result.body or ""
+
+            if not body:
+                continue
+
+            body_lower = body.lower()
+
+            for pattern in LFI_INDICATORS:
+
+                match = re.search(
+                    pattern,
+                    body_lower,
+                )
+
+                if not match:
+                    continue
+
+                log_item["vulnerable"] = True
+
+                matched_indicator = (
+                    match.group(0)[:120]
+                )
+
+                log_item["details"] = (
+                    "Strong system-file signature "
+                    f"matched: '{matched_indicator}'"
+                )
+
+                evidence_log = (
+                    "[ACTIVE PROBE EXECUTION LOG]\n"
+                    f"METHOD & TARGET : "
+                    f"{method_str} {probe_url}\n"
+                    f"POST DATA       : "
+                    f"{post_data if use_post else 'N/A'}\n"
+                    f"PAYLOAD INJECTED: {payload}\n"
+                    f"HTTP STATUS     : "
+                    f"{result.status_code}\n"
+                    f"VERIFICATION    : Strong system-file "
+                    f"signature matched: "
+                    f"'{matched_indicator}'"
+                )
+
+                finding = _make_finding(
+                    scan_id=scan_id,
+                    target_url=probe_url,
+                    title=(
+                        f"Local File Inclusion / Path Traversal "
+                        f"— Parameter '{param.param_name}' "
+                        f"({method_str})"
+                    ),
+                    description=(
+                        f"The parameter '{param.param_name}' "
+                        f"({method_str}) accepted a path traversal "
+                        f"payload and the response contained a "
+                        f"strong operating-system file signature."
+                    ),
+                    severity="critical",
+                    owasp=(
+                        "A01:2021-Broken Access Control"
+                    ),
+                    cwe="CWE-22",
+                    evidence=evidence_log,
+                    remediation=(
+                        "Never use user-controlled input directly "
+                        "in filesystem paths. Apply strict "
+                        "allowlisting and canonicalize paths "
+                        "before access."
+                    ),
+                )
+
+                return finding, log_item
+
         except Exception as e:
-            logger.debug(f"[LFI Probe] Error on {param.param_name}: {e}")
-            log_item["details"] = f"Network/Timeout error: {e}"
 
-    return finding, last_log
+            logger.debug(
+                f"[LFI Probe] Error on "
+                f"{param.param_name}: {e}"
+            )
+
+            log_item["details"] = (
+                f"Network/Timeout error: {e}"
+            )
+
+    return None, last_log
 
 
-def _probe_crlf(fetcher: Fetcher, param: ParamTarget, scan_id: str, use_post: bool = False):
+# ═══════════════════════════════════════════════════════════
+# PROBE 5 — CRLF / HEADER INJECTION
+# ═══════════════════════════════════════════════════════════
+
+async def _probe_crlf(
+    fetcher: Fetcher,
+    param: ParamTarget,
+    scan_id: str,
+    use_post: bool = False,
+):
+
     method_str = "POST" if use_post else "GET"
+
     marker = "X-Mapper-Injected"
-    payload = f"{param.param_value}%0d%0a{marker}:1"
-    probe_url, post_data = _prepare_injection(param, payload, use_post=use_post)
+
+    payload = (
+        f"{param.param_value}"
+        f"%0d%0a"
+        f"{marker}:1"
+    )
+
+    probe_url, post_data = _prepare_injection(
+        param,
+        payload,
+        use_post=use_post,
+    )
+
     if not probe_url:
         return None, None
 
-    finding = None
     log_item = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat(),
         "param_name": param.param_name,
-        "probe_type": f"CRLF / Header Injection ({method_str})",
+        "probe_type": (
+            f"CRLF / Header Injection "
+            f"({method_str})"
+        ),
         "target_url": probe_url,
         "payload": payload,
         "status_code": 0,
         "vulnerable": False,
-        "details": "CRLF headers not injected (Safe)"
+        "details": (
+            "Injected header not observed "
+            "in response headers (Safe)"
+        ),
     }
 
     try:
-        if use_post:
-            result = fetcher.fetch_post(probe_url, data=post_data, timeout=3)
-        else:
-            result = fetcher.fetch(probe_url, timeout=3)
 
-        if result:
-            log_item["status_code"] = result.status_code
-        response_headers = (result.headers if result else {}) or {}
-        if marker.lower() in response_headers:
+        if use_post:
+
+            result = fetcher.fetch_post(
+                probe_url,
+                data=post_data,
+                timeout=3,
+            )
+
+        else:
+
+            result = fetcher.fetch(
+                probe_url,
+                timeout=3,
+            )
+
+        if not result:
+            return None, log_item
+
+        log_item["status_code"] = (
+            result.status_code
+        )
+
+        response_headers = (
+            result.headers or {}
+        )
+
+        # Header-name check is case-insensitive.
+        injected_header = any(
+            str(header_name).lower()
+            == marker.lower()
+            for header_name in response_headers
+        )
+
+        if injected_header:
+
             log_item["vulnerable"] = True
-            log_item["details"] = f"Injected header '{marker}: 1' appeared in response headers"
+
+            log_item["details"] = (
+                f"Injected header '{marker}: 1' "
+                "appeared in response headers"
+            )
+
             evidence_log = (
-                f"[ACTIVE PROBE EXECUTION LOG]\n"
-                f"METHOD & TARGET : {method_str} {probe_url}\n"
-                f"POST DATA       : {post_data if use_post else 'N/A'}\n"
+                "[ACTIVE PROBE EXECUTION LOG]\n"
+                f"METHOD & TARGET : "
+                f"{method_str} {probe_url}\n"
+                f"POST DATA       : "
+                f"{post_data if use_post else 'N/A'}\n"
                 f"PAYLOAD INJECTED: {payload}\n"
                 f"HTTP STATUS     : {result.status_code}\n"
-                f"VERIFICATION    : Injected header '{marker}: 1' appeared in response headers."
+                f"VERIFICATION    : Injected header "
+                f"'{marker}: 1' appeared in response headers."
             )
+
             finding = _make_finding(
                 scan_id=scan_id,
                 target_url=probe_url,
-                title=f"CRLF / Header Injection — Parameter '{param.param_name}' ({method_str})",
+                title=(
+                    f"CRLF / Header Injection — "
+                    f"Parameter '{param.param_name}' "
+                    f"({method_str})"
+                ),
                 description=(
-                    f"The parameter '{param.param_name}' ({method_str}) is vulnerable to CRLF injection. "
-                    f"Injecting a carriage return + line feed sequence caused a custom header "
-                    f"('{marker}: 1') to appear in the HTTP response headers."
+                    f"The parameter '{param.param_name}' "
+                    f"({method_str}) accepted CRLF characters "
+                    f"and caused the injected header "
+                    f"'{marker}: 1' to appear in the "
+                    "HTTP response headers."
                 ),
                 severity="high",
-                owasp="A05:2025-Injection",
+                owasp="A03:2021-Injection",
                 cwe="CWE-113",
                 evidence=evidence_log,
                 remediation=(
-                    "Strip or encode CR (\\r) and LF (\\n) characters from ALL user input "
-                    "before including it in HTTP headers or redirect URLs. "
-                    "Use framework-level header setting functions that auto-sanitize."
+                    "Reject or safely encode CR and LF characters "
+                    "before user-controlled data reaches HTTP "
+                    "header construction."
                 ),
             )
+
             return finding, log_item
 
-        if result and result.body and marker.lower() in result.body.lower():
-            log_item["vulnerable"] = True
-            log_item["details"] = f"CRLF marker '{marker}' reflected in response body"
-            evidence_log = (
-                f"[ACTIVE PROBE EXECUTION LOG]\n"
-                f"METHOD & TARGET : {method_str} {probe_url}\n"
-                f"POST DATA       : {post_data if use_post else 'N/A'}\n"
-                f"PAYLOAD INJECTED: {payload}\n"
-                f"HTTP STATUS     : {result.status_code}\n"
-                f"VERIFICATION    : CRLF marker '{marker}' reflected in response body."
-            )
-            finding = _make_finding(
-                scan_id=scan_id,
-                target_url=probe_url,
-                title=f"CRLF Injection Indicator — Parameter '{param.param_name}' ({method_str})",
-                description=(
-                    f"The parameter '{param.param_name}' ({method_str}) may be vulnerable to CRLF injection. "
-                    f"The injected marker '{marker}' appeared in the response body."
-                ),
-                severity="medium",
-                owasp="A05:2025-Injection",
-                cwe="CWE-113",
-                evidence=evidence_log,
-                remediation=(
-                    "Sanitize CR/LF characters from user input used in HTTP headers or responses."
-                ),
-            )
-            return finding, log_item
     except Exception as e:
-        logger.debug(f"[CRLF Probe] Error on {param.param_name}: {e}")
-        log_item["details"] = f"Network/Timeout error: {e}"
 
-    return finding, log_item
+        logger.debug(
+            f"[CRLF Probe] Error on "
+            f"{param.param_name}: {e}"
+        )
+
+        log_item["details"] = (
+            f"Network/Timeout error: {e}"
+        )
+
+    return None, log_item
 
 
-def _probe_open_redirect(fetcher: Fetcher, param: ParamTarget, scan_id: str):
-    """
-    Open Redirect probe (GET only — this vector is exploited via shared
-    links, so only the URL-based case is meaningful).
-    Only tests parameters whose name suggests they control a redirect
-    destination. Injects an external marker host and checks whether the
-    server sends the browser there via a 3xx Location header, or embeds
-    it in a client-side redirect (meta-refresh / JS).
-    """
-    if param.param_name.lower() not in OPEN_REDIRECT_PARAM_NAMES:
+# ═══════════════════════════════════════════════════════════
+# PROBE 6 — OPEN REDIRECT
+# ═══════════════════════════════════════════════════════════
+
+async def _probe_open_redirect(
+    fetcher: Fetcher,
+    param: ParamTarget,
+    scan_id: str,
+):
+
+    if (
+        param.param_name.lower()
+        not in OPEN_REDIRECT_PARAM_NAMES
+    ):
         return None, None
 
     marker_host = "mapper-redirect-check.example"
-    payload = f"https://{marker_host}/"
-    probe_url = _inject_param(param, payload)
+
+    payload = (
+        f"https://{marker_host}/"
+    )
+
+    probe_url = _inject_param(
+        param,
+        payload,
+    )
+
     if not probe_url:
         return None, None
 
-    finding = None
     log_item = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(
+            timezone.utc
+        ).isoformat(),
         "param_name": param.param_name,
         "probe_type": "Open Redirect (GET)",
         "target_url": probe_url,
         "payload": payload,
         "status_code": 0,
         "vulnerable": False,
-        "details": "Server did not redirect to the injected external host (Safe)"
+        "details": (
+            "Server did not redirect to "
+            "the injected external host (Safe)"
+        ),
     }
 
     try:
-        result = fetcher.fetch(probe_url, timeout=3, follow_redirects=False)
-        if result:
-            log_item["status_code"] = result.status_code
-            location = (result.headers or {}).get("location", "")
-            body_lower = (result.body or "").lower()
 
-            redirected_externally = marker_host in location.lower()
-            reflected_in_body = (
-                marker_host in body_lower and (
-                    ("meta" in body_lower and "refresh" in body_lower)
-                    or "location.href" in body_lower
-                    or "window.location" in body_lower
+        result = fetcher.fetch(
+            probe_url,
+            timeout=3,
+            follow_redirects=False,
+        )
+
+        if not result:
+            return None, log_item
+
+        log_item["status_code"] = (
+            result.status_code
+        )
+
+        response_headers = (
+            result.headers or {}
+        )
+
+        location = ""
+
+        for header_name, header_value in response_headers.items():
+
+            if str(header_name).lower() == "location":
+
+                location = str(
+                    header_value or ""
                 )
+
+                break
+
+        body_lower = (
+            result.body or ""
+        ).lower()
+
+        redirected_externally = (
+            marker_host.lower()
+            in location.lower()
+        )
+
+        reflected_client_redirect = (
+            marker_host.lower() in body_lower
+            and (
+                (
+                    "meta" in body_lower
+                    and "refresh" in body_lower
+                )
+                or "location.href" in body_lower
+                or "window.location" in body_lower
+            )
+        )
+
+        if (
+            redirected_externally
+            or reflected_client_redirect
+        ):
+
+            log_item["vulnerable"] = True
+
+            if redirected_externally:
+
+                evidence_source = (
+                    "HTTP Location header"
+                )
+
+            else:
+
+                evidence_source = (
+                    "client-side redirect "
+                    "script/meta-refresh"
+                )
+
+            log_item["details"] = (
+                "Server redirected to injected "
+                f"external host via {evidence_source}"
             )
 
-            if redirected_externally or reflected_in_body:
-                log_item["vulnerable"] = True
-                evidence_source = "Location header" if redirected_externally else "client-side redirect script/meta-refresh"
-                log_item["details"] = f"Server redirected to injected external host via {evidence_source}"
-                evidence_log = (
-                    f"[ACTIVE PROBE EXECUTION LOG]\n"
-                    f"METHOD & TARGET : GET {probe_url}\n"
-                    f"PAYLOAD INJECTED: {payload}\n"
-                    f"HTTP STATUS     : {result.status_code}\n"
-                    f"VERIFICATION    : Redirected to external host via {evidence_source}."
-                )
-                finding = _make_finding(
-                    scan_id=scan_id,
-                    target_url=probe_url,
-                    title=f"Open Redirect — Parameter '{param.param_name}' (GET)",
-                    description=(
-                        f"The parameter '{param.param_name}' controls a redirect destination "
-                        f"without validating it against an allowlist. Injecting an external URL "
-                        f"('{payload}') caused the application to redirect the browser there, "
-                        f"which can be abused for phishing."
-                    ),
-                    severity="medium",
-                    owasp="A01:2025-Broken Access Control",
-                    cwe="CWE-601",
-                    evidence=evidence_log,
-                    remediation=(
-                        "Validate redirect targets against an allowlist of permitted paths/domains. "
-                        "Prefer relative paths over full URLs for internal redirects. "
-                        "Never redirect directly to a user-supplied absolute URL."
-                    ),
-                )
+            evidence_log = (
+                "[ACTIVE PROBE EXECUTION LOG]\n"
+                f"METHOD & TARGET : GET {probe_url}\n"
+                f"PAYLOAD INJECTED: {payload}\n"
+                f"HTTP STATUS     : {result.status_code}\n"
+                f"VERIFICATION    : Redirected to "
+                f"external host via {evidence_source}."
+            )
+
+            finding = _make_finding(
+                scan_id=scan_id,
+                target_url=probe_url,
+                title=(
+                    f"Open Redirect — Parameter "
+                    f"'{param.param_name}' (GET)"
+                ),
+                description=(
+                    f"The parameter '{param.param_name}' "
+                    "accepted an external redirect target. "
+                    f"The injected host '{marker_host}' "
+                    "was used as the redirect destination."
+                ),
+                severity="medium",
+                owasp=(
+                    "A01:2021-Broken Access Control"
+                ),
+                cwe="CWE-601",
+                evidence=evidence_log,
+                remediation=(
+                    "Validate redirect destinations against "
+                    "an allowlist. Prefer relative internal "
+                    "paths instead of arbitrary absolute URLs."
+                ),
+            )
+
+            return finding, log_item
+
     except Exception as e:
-        logger.debug(f"[Open Redirect Probe] Error on {param.param_name}: {e}")
-        log_item["details"] = f"Network/Timeout error: {e}"
 
-    return finding, log_item
+        logger.debug(
+            f"[Open Redirect Probe] Error on "
+            f"{param.param_name}: {e}"
+        )
+
+        log_item["details"] = (
+            f"Network/Timeout error: {e}"
+        )
+
+    return None, log_item
 
 
 # ═══════════════════════════════════════════════════════════
-#  HELPERS
+# HELPERS
 # ═══════════════════════════════════════════════════════════
 
-def _prepare_injection(param: ParamTarget, payload: str, use_post: bool = False) -> tuple:
+def _prepare_injection(
+    param: ParamTarget,
+    payload: str,
+    use_post: bool = False,
+) -> tuple:
     """
-    Returns (probe_url, post_data_dict) for injection.
-    If use_post is True: target URL is param.url, post_data_dict has injected field.
-    If use_post is False: probe_url has injected query string, post_data_dict is None.
+    Returns:
+        (probe_url, post_data)
+
+    POST:
+        Target URL remains param.url and the parameter is
+        injected into the POST form body.
+
+    GET:
+        Parameter is replaced in the query string.
     """
+
     if use_post:
-        post_data = {param.param_name: payload}
+
+        post_data = {
+            param.param_name: payload
+        }
+
         return param.url, post_data
-    else:
-        probe_url = _inject_param(param, payload)
-        return probe_url, None
+
+    probe_url = _inject_param(
+        param,
+        payload,
+    )
+
+    return probe_url, None
 
 
-def _inject_param(param: ParamTarget, payload: str) -> str:
+def _inject_param(
+    param: ParamTarget,
+    payload: str,
+) -> str:
     """
-    Build a URL with the payload injected into the target query parameter.
+    Build a URL with the payload injected into the
+    target query parameter.
     """
+
     try:
-        parsed = urlparse(param.url)
-        query_params = parse_qs(parsed.query, keep_blank_values=True)
 
-        if param.param_name in query_params:
-            query_params[param.param_name] = [payload]
-        else:
-            query_params[param.param_name] = [payload]
+        parsed = urlparse(
+            param.url
+        )
 
-        new_query = urlencode(query_params, doseq=True)
-        new_url = urlunparse((
-            parsed.scheme, parsed.netloc, parsed.path,
-            parsed.params, new_query, parsed.fragment
-        ))
-        return new_url
+        query_params = parse_qs(
+            parsed.query,
+            keep_blank_values=True,
+        )
+
+        query_params[
+            param.param_name
+        ] = [payload]
+
+        new_query = urlencode(
+            query_params,
+            doseq=True,
+        )
+
+        return urlunparse(
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                parsed.params,
+                new_query,
+                parsed.fragment,
+            )
+        )
+
     except Exception as e:
-        logger.debug(f"[Inject] Failed to build probe URL: {e}")
+
+        logger.debug(
+            f"[Inject] Failed to build "
+            f"probe URL: {e}"
+        )
+
         return ""
 
 
 def _make_finding(
-    scan_id: str, target_url: str, title: str, description: str,
-    severity: str, owasp: str, cwe: str, evidence: str, remediation: str
+    scan_id: str,
+    target_url: str,
+    title: str,
+    description: str,
+    severity: str,
+    owasp: str,
+    cwe: str,
+    evidence: str,
+    remediation: str,
 ) -> Finding:
-    """Create a Finding from active probe results."""
+    """
+    Create a Finding from an active probe result.
+    """
+
     return Finding(
         id=str(uuid.uuid4()),
         scan_id=scan_id,
         target_url=target_url,
-        timestamp=datetime.now(timezone.utc).isoformat(),
+        timestamp=datetime.now(
+            timezone.utc
+        ).isoformat(),
         source_tool="active_probe",
         type="vulnerability",
         severity=severity,

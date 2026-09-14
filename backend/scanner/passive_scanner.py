@@ -76,45 +76,38 @@ def _check_insecure_design(snapshot, scan_id: str) -> list:
     now = datetime.now(timezone.utc).isoformat()
     headers = snapshot.headers
 
-    # Check for missing rate-limit headers on the main page
-    rate_limit_headers = ["x-ratelimit-limit", "x-rate-limit-limit", "ratelimit-limit",
-                          "retry-after", "x-ratelimit-remaining"]
-    has_rate_limit = any(h in headers for h in rate_limit_headers)
-
-    if not has_rate_limit and snapshot.forms:
-        findings.append(Finding(
-            id=str(uuid.uuid4()), scan_id=scan_id,
-            target_url=snapshot.url, timestamp=now,
-            source_tool="custom", type="misconfiguration",
-            severity="medium",
-            title="No Rate Limiting Detected",
-            description="The application has forms but no rate-limiting headers were detected. "
-                        "This may allow brute-force attacks on login forms or API abuse.",
-            owasp_category="A06:2025-Insecure Design", cwe="CWE-770",
-            evidence_location="header",
-            evidence_snippet="No X-RateLimit-* or RateLimit-* headers found",
-            remediation="Implement rate limiting on authentication and sensitive endpoints.",
-        ))
-
-    # Check for autocomplete on password fields
+    # Check for explicitly unsafe autocomplete on password fields.
     for form in snapshot.forms:
         for inp in form.get("inputs", []):
-            if inp.get("type") == "password":
-                # If autocomplete isn't explicitly off, flag it
-                findings.append(Finding(
-                    id=str(uuid.uuid4()), scan_id=scan_id,
-                    target_url=snapshot.url, timestamp=now,
-                    source_tool="custom", type="misconfiguration",
-                    severity="low",
-                    title="Password Field May Allow Autocomplete",
-                    description="A password input field was found. Ensure autocomplete is disabled "
-                                "on sensitive fields to prevent credential caching.",
-                    owasp_category="A06:2025-Insecure Design", cwe="CWE-522",
-                    evidence_location="body",
-                    evidence_snippet=f"Form action: {form.get('action', 'N/A')}, input: {inp.get('name', 'password')}",
-                    remediation="Add autocomplete=\"new-password\" to password inputs.",
-                ))
-                break
+            if inp.get("type") != "password":
+                continue
+
+            autocomplete = str(inp.get("autocomplete", "")).strip().lower()
+
+            # Do not infer a vulnerability from the existence of a password field.
+            # Only flag an explicitly unsafe autocomplete value.
+            if autocomplete not in {"on", "current-password"}:
+                continue
+
+            findings.append(Finding(
+                id=str(uuid.uuid4()), scan_id=scan_id,
+                target_url=snapshot.url, timestamp=now,
+                source_tool="custom", type="misconfiguration",
+                severity="low",
+                title="Password Field Allows Autocomplete",
+                description="A password input explicitly allows credential autocomplete, "
+                            "which may permit browser credential caching.",
+                owasp_category="A06:2025-Insecure Design", cwe="CWE-522",
+                evidence_location="body",
+                evidence_snippet=(
+                    f"Form action: {form.get('action', 'N/A')}, "
+                    f"input: {inp.get('name', 'password')}, "
+                    f"autocomplete: {autocomplete}"
+                ),
+                remediation="Use an appropriate autocomplete value such as "
+                            "autocomplete=\"new-password\" where credential caching is not desired.",
+            ))
+            break
 
     return findings
 
@@ -123,31 +116,6 @@ def _check_auth_failures(snapshot, scan_id: str) -> list:
     """A07:2025-Authentication Failures."""
     findings = []
     now = datetime.now(timezone.utc).isoformat()
-
-    # Check login forms for missing CSRF protection
-    for form in snapshot.forms:
-        inputs = form.get("inputs", [])
-        input_types = [i.get("type", "text") for i in inputs]
-        input_names = [i.get("name", "").lower() for i in inputs]
-
-        has_password = "password" in input_types
-        has_csrf = any("csrf" in n or "token" in n or "_token" in n for n in input_names)
-
-        if has_password and not has_csrf:
-            findings.append(Finding(
-                id=str(uuid.uuid4()), scan_id=scan_id,
-                target_url=snapshot.url, timestamp=now,
-                source_tool="custom", type="vulnerability",
-                severity="medium",
-                title="Login Form Missing CSRF Token",
-                description="A login form was detected without a visible CSRF token field. "
-                            "This may allow Cross-Site Request Forgery attacks.",
-                owasp_category="A07:2025-Authentication Failures",
-                cwe="CWE-352",
-                evidence_location="body",
-                evidence_snippet=f"Form action: {form.get('action', 'N/A')}, method: {form.get('method', 'GET')}",
-                remediation="Add CSRF token to all authentication forms and validate server-side.",
-            ))
 
     # Check for session tokens in URL
     if snapshot.url and ("sessionid=" in snapshot.url.lower() or
@@ -219,20 +187,6 @@ def _check_logging_monitoring(snapshot, scan_id: str) -> list:
     now = datetime.now(timezone.utc).isoformat()
     headers = snapshot.headers
 
-    # Indicators that suggest security monitoring is in place
-    monitoring_headers = [
-        "x-request-id", "x-correlation-id", "x-trace-id",
-        "x-amzn-requestid", "x-amzn-trace-id",
-        "sentry-trace", "x-datadog-trace-id", "traceparent",
-        "x-b3-traceid", "x-cloud-trace-context",
-    ]
-
-    has_monitoring = any(h in headers for h in monitoring_headers)
-    has_auth_forms = any(
-        any(i.get("type") == "password" for i in f.get("inputs", []))
-        for f in (snapshot.forms or [])
-    )
-
     # Check for verbose error pages (stack traces in production)
     body = snapshot.body_lower or ""
     has_stack_trace = any(indicator in body for indicator in [
@@ -266,29 +220,6 @@ def _check_logging_monitoring(snapshot, scan_id: str) -> list:
             ),
         ))
 
-    if not has_monitoring and has_auth_forms:
-        findings.append(Finding(
-            id=str(uuid.uuid4()), scan_id=scan_id,
-            target_url=snapshot.url, timestamp=now,
-            source_tool="custom", type="misconfiguration",
-            severity="low",
-            title="No Security Monitoring Headers Detected",
-            description=(
-                "The application has authentication forms but no request tracing or "
-                "monitoring headers were detected (X-Request-Id, Sentry-Trace, etc.). "
-                "This may indicate insufficient security logging and monitoring."
-            ),
-            owasp_category="A09:2025-Security Logging and Alerting Failures",
-            cwe="CWE-778",
-            evidence_location="header",
-            evidence_snippet="No X-Request-Id, X-Correlation-Id, Sentry-Trace, or Datadog headers found",
-            remediation=(
-                "Implement structured security logging for all authentication events. "
-                "Add request tracing (X-Request-Id) for incident correlation. "
-                "Deploy monitoring tools (Sentry, Datadog, ELK stack) for real-time alerting."
-            ),
-        ))
-
     return findings
 
 
@@ -301,47 +232,4 @@ def _check_ssrf_indicators(snapshot, scan_id: str) -> list:
 
     # Check URL for redirect/fetch-like parameters
     url_lower = (snapshot.url or "").lower()
-    ssrf_params = [
-        "url=", "redirect=", "next=", "callback=", "dest=", "uri=",
-        "fetch=", "target=", "return=", "return_to=", "goto=",
-        "link=", "src=", "source=", "redirect_uri=", "redirect_url=",
-        "continue=", "forward=", "proxy=", "request=",
-    ]
-
-    found_params = [p.rstrip("=") for p in ssrf_params if p in url_lower]
-
-    # Also check forms for URL input fields
-    for form in (snapshot.forms or []):
-        for inp in form.get("inputs", []):
-            name = (inp.get("name") or "").lower()
-            inp_type = (inp.get("type") or "").lower()
-            if name in [p.rstrip("=") for p in ssrf_params] or inp_type == "url":
-                if name not in found_params:
-                    found_params.append(name)
-
-    if found_params:
-        findings.append(Finding(
-            id=str(uuid.uuid4()), scan_id=scan_id,
-            target_url=snapshot.url, timestamp=now,
-            source_tool="custom", type="vulnerability",
-            severity="medium",
-            title="Potential SSRF Entry Point Detected",
-            description=(
-                f"URL parameters or form inputs that accept URL-like values were detected: "
-                f"{', '.join(found_params)}. These may be exploitable for Server-Side Request "
-                f"Forgery (SSRF) if the server fetches user-supplied URLs without validation."
-            ),
-            owasp_category="A01:2025-Broken Access Control",
-            cwe="CWE-918",
-            evidence_location="url" if any(p + "=" in url_lower for p in found_params) else "body",
-            evidence_snippet=f"Potentially vulnerable parameters: {', '.join(found_params)}",
-            remediation=(
-                "Validate and sanitize all URL inputs server-side. "
-                "Use an allowlist of permitted domains and protocols. "
-                "Block requests to internal/private IP ranges (127.0.0.1, 10.x, 172.16-31.x, 192.168.x). "
-                "Block cloud metadata endpoints (169.254.169.254). "
-                "Use a dedicated HTTP client with SSRF protections."
-            ),
-        ))
-
     return findings

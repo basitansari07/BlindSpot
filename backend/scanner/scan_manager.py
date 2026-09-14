@@ -209,6 +209,7 @@ class ScanOrchestrator:
         # Parse auth_cookies from "key=val; key2=val2" string form into a dict
         auth_cookies_raw = options.get("auth_cookies", "")
         auth_cookies = {}
+        print(f"[DEBUG] options auth_cookies = {options.get('auth_cookies')!r}")
         if isinstance(auth_cookies_raw, dict):
             auth_cookies = auth_cookies_raw
         elif isinstance(auth_cookies_raw, str) and auth_cookies_raw.strip():

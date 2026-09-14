@@ -1,3 +1,5 @@
+import os
+ALLOW_PRIVATE = os.environ.get("ALLOW_PRIVATE_SCAN", "false").lower() == "true"
 """
 app.py — Main API Server for the Vulnerability Scanner
 
@@ -1014,7 +1016,7 @@ async def submit_scan(
     }
 
 
-    if hostname.lower() in blocked_hosts:
+    if not ALLOW_PRIVATE and hostname.lower() in blocked_hosts:
 
         raise HTTPException(
             status_code=403,
@@ -1036,10 +1038,13 @@ async def submit_scan(
         )
 
         if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_reserved
-            or ip.is_link_local
+            not ALLOW_PRIVATE
+            and (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_reserved
+                or ip.is_link_local
+            )
         ):
 
             raise HTTPException(
@@ -1075,6 +1080,16 @@ async def submit_scan(
         )
 
 
+    custom_headers_raw = data.get("custom_headers", {})
+    parsed_cookie_string = ""
+    parsed_extra_headers = {}
+    if isinstance(custom_headers_raw, dict):
+        for key, value in custom_headers_raw.items():
+            if key.lower() == "cookie":
+                parsed_cookie_string = str(value)
+            else:
+                parsed_extra_headers[key] = str(value)
+
     options = {
 
         "deep_scan": data.get(
@@ -1099,14 +1114,14 @@ async def submit_scan(
 
         "submitted_by": auth_user,
 
-        "auth_cookies": data.get(
-            "auth_cookies",
-            ""
+        "auth_cookies": (
+            data.get("auth_cookies", "")
+            or parsed_cookie_string
         ),
 
-        "auth_headers": data.get(
-            "auth_headers",
-            ""
+        "auth_headers": (
+            data.get("auth_headers", "")
+            or parsed_extra_headers
         ),
 
         "rate_limit": int(
