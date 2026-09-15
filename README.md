@@ -1,138 +1,178 @@
-# BlindSpot
+🛡️ BlindSpot — Website Vulnerability Scanner
 
-A website vulnerability scanning tool for detecting OWASP Top 10 risks and outdated components.
+Stay ahead of every vulnerability.
 
-BlindSpot combines passive detection rules, Nuclei-based signature scanning, and non-destructive active probing to assess the security posture of a target web application — accessible via both a web dashboard and a browser extension.
+BlindSpot is a full-stack web security scanning platform that maps attack surfaces, detects real vulnerabilities through passive and active probing, and delivers evidence-backed security reports with clear remediation guidance — all from a single, easy-to-use dashboard.
 
-## Features
+Team ID: 48 
+Team Name: Cyberdefeders 
+Hackathon: GLS Nexus Hackathon 2026
 
-- **Passive Security Checks** — headers, misconfigurations, insecure design patterns
-- **Active Probing** (`full_active` mode) — non-destructive verification of:
-  - Reflected XSS (canary injection)
-  - Error-based SQL Injection
-  - Time-based Blind SQL Injection
-  - Local File Inclusion / Path Traversal
-  - CRLF / Header Injection
-  - Open Redirect
-- **Nuclei Template Integration** — thousands of community-maintained detection signatures
-- **OWASP Top 10 Mapping** — findings classified against current OWASP categories
-- **CVSS Scoring & Risk Grading** — each scan produces a calculated risk score (0–100) and letter grade
-- **AI-Generated Reports** — professional PDF security assessment reports generated per scan
-- **Authenticated Access** — JWT-based auth for the API
-- **Dual Access** — scan via the web dashboard or the browser extension, with consistent results across both
+Table of Contents:
+Overview
+Features
+Tech Stack
+Architecture
+Screenshots
+Setup Instructions
+Usage
+Live Demo
+Project Documentation
+Team
 
-## Project Structure
+🔍 Overview
 
-```
-BlindSpot/
-├── backend/                 # FastAPI backend & scanner engine
-│   ├── app.py                # Main API server
-│   ├── auth.py                # Authentication (JWT)
-│   ├── config.py              # App configuration
-│   ├── requirements.txt
-│   ├── demo.sh                # Demo/setup helper script
-│   ├── engine/
-│   ├── enrichment/            # CVSS/CVE enrichment
-│   ├── export/                # Report export (e.g. AI PDF reports)
-│   ├── importers/             # Nuclei template importer
-│   ├── scanner/
-│   │   ├── active_scanner.py
-│   │   ├── passive_scanner.py
-│   │   └── scan_manager.py
-│   ├── storage/
-│   └── ai/                    # AI report generation
-├── data/
-│   ├── nuclei-templates/
-│   └── safe_versions.json
-├── rules/
-│   ├── scan_rules.json
-│   └── correlation_rules.json
-├── extension/                # Browser extension (Manifest V3)
-│   ├── manifest.json
-│   ├── background.js
-│   ├── popup.html / popup.js / popup.css
-│   └── icons/
-└── web_frontend/              # Web dashboard (React + Vite)
-    ├── src/
-    ├── public/
-    ├── package.json
-    └── vite.config.js
-```
+BlindSpot is a security assessment platform built to give developers, students, and security enthusiasts an accessible way to scan web applications for common vulnerabilities. It combines passive analysis (headers, TLS configuration, exposed files, outdated components) with active probing (SQL Injection, XSS, CRLF injection, open redirects, path traversal) to produce a realistic, evidence-backed picture of a target's security posture.
 
-## Getting Started
+Every finding in a BlindSpot report is backed by actual proof — the exact request sent, the response received, and the specific signal that confirmed the vulnerability — so results are transparent and verifiable, not just guesses.
 
-### Prerequisites
+✨ Features:
+Passive Security Scanning — missing security headers (CSP, HSTS, X-Frame-Options, etc.), TLS/HTTPS misconfigurations, outdated JS libraries, exposed sensitive files (.git, robots.txt), and more.
+Active Vulnerability Probing — real, non-destructive probes for:
+Reflected XSS (canary-based verification)
+Error-Based SQL Injection
+Time-Based Blind SQL Injection
+CRLF / HTTP Header Injection
+Local File Inclusion / Path Traversal
+Open Redirect
+Configurable Scan Intensity — Passive, Light Active, or Full Active modes depending on how deep the assessment should go.
+OWASP Top 10 Mapping — every finding is categorized against the current OWASP Top 10 for clear risk context.
+Risk Scoring Engine — an automated risk score (0–100) and letter grade (A–F) calculated from finding severity and coverage.
+Evidence-Backed Reporting — every finding includes the exact probe request, response evidence, and remediation steps.
+Detection Rules Engine — a searchable library of security rules (CVE-based, Wappalyzer, and Nuclei-derived) that power passive detection.
+AI-Generated PDF Reports — a professional, downloadable security assessment report generated from scan results.
+JSON Export — full raw scan data available for further analysis or integration.
+Authenticated Scanning — supports custom cookies/headers so authenticated areas of an application can be assessed.
+Scan History Dashboard — track all past assessments, risk trends, and findings in one place.
+Modern, Responsive UI — a clean dark-themed dashboard built for clarity during security reviews.
 
-- Python 3.10+
-- Node.js + npm (for the web dashboard)
-- A Chromium-based browser (for the extension)
+🛠️ Tech Stack
 
-### Backend Setup
+Frontend:
+React (Vite)
+Custom CSS (design system with CSS variables, no UI framework dependency)
 
-```bash
+Backend:
+Python 3
+FastAPI (ASGI, via Uvicorn)
+Async HTTP scanning engine (httpx)
+Pydantic for data validation
+
+Scanning Engine
+Custom passive scanner (headers, TLS, tech fingerprinting)
+Custom active probe engine (SQLi, XSS, CRLF, LFI, Open Redirect)
+Rule-based detection engine (CVE, Wappalyzer, Nuclei template imports)
+Risk correlation and scoring engine
+
+Data & Reporting
+Elasticsearch (optional persistent storage; falls back to in-memory mode)
+AI-powered report generation (PDF)
+
+Auth
+Token-based authentication with session handling
+🏗️ Architecture
+┌─────────────┐      REST API      ┌──────────────────┐
+│   React UI  │ ─────────────────► │   FastAPI Backend │
+│ (Dashboard) │ ◄───────────────── │     (app.py)       │
+└─────────────┘                    └─────────┬──────────┘
+                                              │
+                          ┌───────────────────┼───────────────────┐
+                          ▼                   ▼                   ▼
+                 ┌────────────────┐  ┌────────────────┐  ┌────────────────┐
+                 │ Passive Scanner │  │ Active Scanner  │  │ Rule Engine    │
+                 │ (headers, TLS,  │  │ (SQLi, XSS,     │  │ (CVE/Wappalyzer│
+                 │  tech detect)   │  │  CRLF, LFI...)  │  │  /Nuclei rules)│
+                 └────────────────┘  └────────────────┘  └────────────────┘
+                          │                   │                   │
+                          └───────────────────┼───────────────────┘
+                                              ▼
+                                  ┌────────────────────┐
+                                  │  Risk Scoring &      │
+                                  │  Finding Correlator  │
+                                  └──────────┬───────────┘
+                                             ▼
+                                  ┌────────────────────┐
+                                  │  Report + AI PDF     │
+                                  │  Generator           │
+                                  └────────────────────┘
+📸 Screenshots
+
+Add screenshots of the dashboard, scan report, and detection rules page here before final submission.
+
+/assets/screenshot-dashboard.png
+/assets/screenshot-report.png
+/assets/screenshot-new-scan.png
+
+⚙️ Setup Instructions
+Prerequisites
+Python 3.10+
+Node.js 18+
+Docker — for testing against a local vulnerable target (Optional)
+Elasticsearch — for persistent scan storage (Optional)
+
+1. Clone the repository
+bash
+git clone https://github.com/basitansari07/BlindSpot.git
+cd BlindSpot
+
+3. Backend Setup
+bash
 cd backend
-python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
 
-Run the API server:
+Start the backend:
+bash
+uvicorn app:app --reload
+The API will be available at http://127.0.0.1:8000.
 
-```bash
-python -m uvicorn app:app --host 0.0.0.0 --port 8000
-```
+Default login (auto-created on first run):
+Username: admin
+Password: admin123
 
-The API will be available at `http://localhost:8000`.
-
-> **Note:** The backend uses JWT authentication (`auth.py`) with a local secret file (`.jwt_secret`) and a `users.json` user store. Both are excluded from version control — set these up locally before running the server.
-
-### Web Dashboard Setup
-
-```bash
+3. Frontend Setup
+bash
 cd web_frontend
 npm install
 npm run dev
-```
 
-By default this starts a Vite dev server. Point the dashboard at your running backend instance (`http://localhost:8000`) to submit and view scans.
+The dashboard will be available at http://localhost:5173 (or the port Vite assigns).
 
-### Browser Extension Setup
+4. (Optional) Set up a local vulnerable test target
 
-1. Open your browser's extensions page (e.g. `chrome://extensions`)
-2. Enable **Developer mode**
-3. Click **Load unpacked** and select the `extension/` folder
-4. The extension will now be available to scan the currently active tab's target
+To safely test scanning features, spin up a deliberately vulnerable app:
 
-## Scan Modes
+bash
+docker run -d -p 4280:80 vulnerables/web-dvwa
 
-| Mode | Description |
-|---|---|
-| Passive only | Header and configuration checks, no active injection |
-| `full_active` | Passive checks + full active probe suite (XSS, SQLi, Blind SQLi, LFI, CRLF, Open Redirect) |
+Then scan http://localhost:4280 from the New Scan page.
 
-## Configuration
+Note: scanning localhost/private IPs is blocked by default for safety. To allow it during local testing, set ALLOW_PRIVATE_SCAN=true before starting the backend.
 
-Key environment variables (backend):
+▶️ Usage
+Log in to the dashboard.
+Go to New Scan, enter a target URL you are authorized to test.
+Choose scan options (Deep scan, Security headers, TLS analysis) and a scan intensity (Passive / Light Active / Full Active).
+Confirm authorization and start the scan.
+View the generated Security Report — risk score, findings by severity, OWASP coverage, and active probe logs.
+Export the report as JSON or download the AI-generated PDF report.
 
-| Variable | Default | Description |
-|---|---|---|
-| `ALLOW_PRIVATE_SCAN` | `false` | When `true`, allows scanning private/internal IP ranges and loopback addresses. Use only in controlled/authorized testing environments. |
+🌐 Live Demo
+<ADD_DEPLOYED_DEMO_URL_HERE_IF_AVAILABLE>
 
-Additional runtime configuration lives in `backend/config.py`.
+📄 Project Documentation
+Presentation: /docs/BlindSpot-Presentation.pdf (add file to repo)
+Additional documentation: <ADD_LINKS_HERE_IF_ANY>
 
-## Reports
+👥 Cyberdefeders
+Name	          Role
+Basit Ansari	  Scanning Engine (Detection & Probes) + Frontend (React Dashboard)
+Nischal Anand 	Backend API + Risk Scoring & Reporting
 
-Each completed scan can generate a downloadable, AI-authored PDF report including:
 
-- Executive summary and overall risk grade
-- Severity breakdown (Critical / High / Medium / Low / Informational)
-- OWASP category coverage
-- Prioritized findings with CVSS scores and remediation guidance
+⚠️ Responsible Use
 
-## Disclaimer
+BlindSpot is designed strictly for authorized security testing. Users must obtain explicit permission before scanning any target they do not own or operate. Unauthorized scanning of third-party systems may violate applicable laws and is not condoned by this project.
 
-BlindSpot is intended for authorized security testing only. Only scan targets you own or have explicit written permission to test. The maintainers are not responsible for misuse of this tool.
-
-## License
-
-Specify your project license here.
+This tool was built as part of the GLS Nexus Hackathon 2026 for educational and demonstration purposes only.
