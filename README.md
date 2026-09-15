@@ -1,4 +1,4 @@
-🛡️ BlindSpot — Website Vulnerability Scanner
+BlindSpot — Website Vulnerability Scanner
 
 Stay ahead of every vulnerability.
 
