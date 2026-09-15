@@ -2,6 +2,7 @@ BlindSpot — Website Vulnerability Scanner
 
 BlindSpot is a full-stack web security scanning platform that maps attack surfaces, detects real vulnerabilities through passive and active probing, and delivers evidence-backed security reports with clear remediation guidance — all from a single, easy-to-use dashboard.
 
+
 Team ID: 48 
 Team Name: Cyberdefeders 
 Hackathon: GLS Nexus Hackathon 2026
