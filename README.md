@@ -263,19 +263,21 @@ Add screenshots of the following before the final hackathon submission:
 ### Dashboard
 
 ```text
-/assets/screenshot-dashboard.png
-```
-
-### Scan Report
-
-```text
-/assets/screenshot-report.png
+![BlindSpot Dashboard](dashboard.png)
 ```
 
 ### New Scan
 
 ```text
-/assets/screenshot-new-scan.png
+![New Scan](NewScan.png)
+![New Scan](NewScan(1).png)
+```
+
+### Report
+
+```text
+![Report](ReportPage.png)
+![Report](ReportPage(1).png)
 ```
 
 ### Detection Rules
