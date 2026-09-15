@@ -15,6 +15,7 @@ BlindSpot is a full-stack web security scanning platform that maps attack surfac
 * [Tech Stack](#tech-stack)
 * [Architecture](#architecture)
 * [Screenshots](#screenshots)
+* [Chrome Extension](#chrome-extension)
 * [Setup Instructions](#setup-instructions)
 * [Usage](#usage)
 * [Live Demo](#live-demo)
@@ -280,7 +281,7 @@ A clean dark-themed React dashboard designed for quick security reviews and easy
 
 ---
 
-## [Chrome Extension](#chrome-extension)
+## Chrome Extension
 
 BlindSpot includes a Chrome Extension for browser-based security scanning.
 
