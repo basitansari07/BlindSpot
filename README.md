@@ -1,12 +1,11 @@
 BlindSpot — Website Vulnerability Scanner
 
-Stay ahead of every vulnerability.
-
 BlindSpot is a full-stack web security scanning platform that maps attack surfaces, detects real vulnerabilities through passive and active probing, and delivers evidence-backed security reports with clear remediation guidance — all from a single, easy-to-use dashboard.
 
 Team ID: 48 
 Team Name: Cyberdefeders 
 Hackathon: GLS Nexus Hackathon 2026
+
 
 Table of Contents:
 Overview
@@ -20,13 +19,16 @@ Live Demo
 Project Documentation
 Team
 
-🔍 Overview
+
+
+Overview:
 
 BlindSpot is a security assessment platform built to give developers, students, and security enthusiasts an accessible way to scan web applications for common vulnerabilities. It combines passive analysis (headers, TLS configuration, exposed files, outdated components) with active probing (SQL Injection, XSS, CRLF injection, open redirects, path traversal) to produce a realistic, evidence-backed picture of a target's security posture.
 
 Every finding in a BlindSpot report is backed by actual proof — the exact request sent, the response received, and the specific signal that confirmed the vulnerability — so results are transparent and verifiable, not just guesses.
 
-✨ Features:
+
+Features:
 Passive Security Scanning — missing security headers (CSP, HSTS, X-Frame-Options, etc.), TLS/HTTPS misconfigurations, outdated JS libraries, exposed sensitive files (.git, robots.txt), and more.
 Active Vulnerability Probing — real, non-destructive probes for:
 Reflected XSS (canary-based verification)
@@ -46,7 +48,9 @@ Authenticated Scanning — supports custom cookies/headers so authenticated area
 Scan History Dashboard — track all past assessments, risk trends, and findings in one place.
 Modern, Responsive UI — a clean dark-themed dashboard built for clarity during security reviews.
 
-🛠️ Tech Stack
+
+
+Tech Stack
 
 Frontend:
 React (Vite)
@@ -67,6 +71,8 @@ Risk correlation and scoring engine
 Data & Reporting
 Elasticsearch (optional persistent storage; falls back to in-memory mode)
 AI-powered report generation (PDF)
+
+
 
 Auth
 Token-based authentication with session handling
@@ -95,6 +101,9 @@ Token-based authentication with session handling
                                   │  Report + AI PDF     │
                                   │  Generator           │
                                   └────────────────────┘
+
+
+
 📸 Screenshots
 
 Add screenshots of the dashboard, scan report, and detection rules page here before final submission.
@@ -103,7 +112,9 @@ Add screenshots of the dashboard, scan report, and detection rules page here bef
 /assets/screenshot-report.png
 /assets/screenshot-new-scan.png
 
-⚙️ Setup Instructions
+
+
+Setup Instructions:
 Prerequisites
 Python 3.10+
 Node.js 18+
@@ -150,7 +161,9 @@ Then scan http://localhost:4280 from the New Scan page.
 
 Note: scanning localhost/private IPs is blocked by default for safety. To allow it during local testing, set ALLOW_PRIVATE_SCAN=true before starting the backend.
 
-▶️ Usage
+
+
+Usage:
 Log in to the dashboard.
 Go to New Scan, enter a target URL you are authorized to test.
 Choose scan options (Deep scan, Security headers, TLS analysis) and a scan intensity (Passive / Light Active / Full Active).
@@ -158,21 +171,26 @@ Confirm authorization and start the scan.
 View the generated Security Report — risk score, findings by severity, OWASP coverage, and active probe logs.
 Export the report as JSON or download the AI-generated PDF report.
 
-🌐 Live Demo
+
+
+Live Demo:
 <ADD_DEPLOYED_DEMO_URL_HERE_IF_AVAILABLE>
 
-📄 Project Documentation
+
+
+Project Documentation:
 Presentation: /docs/BlindSpot-Presentation.pdf (add file to repo)
 Additional documentation: <ADD_LINKS_HERE_IF_ANY>
 
-👥 Cyberdefeders
+
+
+Cyberdefeders(Members):
+
 Name	          Role
 Basit Ansari	  Scanning Engine (Detection & Probes) + Frontend (React Dashboard)
 Nischal Anand 	Backend API + Risk Scoring & Reporting
 
 
-⚠️ Responsible Use
 
-BlindSpot is designed strictly for authorized security testing. Users must obtain explicit permission before scanning any target they do not own or operate. Unauthorized scanning of third-party systems may violate applicable laws and is not condoned by this project.
-
-This tool was built as part of the GLS Nexus Hackathon 2026 for educational and demonstration purposes only.
+Responsible Use:
+BlindSpot is designed strictly for authorized security testing. Users must obtain explicit permission before scanning any target they do not own or operate. Unauthorized scanning of third-party systems may violate applicable laws and is not condoned by this project. This tool was built as part of the GLS Nexus Hackathon 2026 for educational and demonstration purposes only.
