@@ -254,39 +254,32 @@ A clean dark-themed React dashboard designed for quick security reviews and easy
                 └────────────────┘
 ```
 
----
+
 
 ## Screenshots
 
-Add screenshots of the following before the final hackathon submission:
 
 ### Dashboard
 
-```text
+
 ![BlindSpot Dashboard](dashboard.png)
-```
+
 
 ### New Scan
 
-```text
+
 ![New Scan](NewScan.png)
 ![New Scan](NewScan(1).png)
-```
+
 
 ### Report
 
-```text
+
 ![Report](ReportPage.png)
 ![Report](ReportPage(1).png)
-```
 
-### Detection Rules
 
-```text
-/assets/screenshot-rules.png
-```
 
-> Screenshots should be committed to the repository under the `/assets` directory.
 
 ---
 
