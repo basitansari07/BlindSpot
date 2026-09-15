@@ -278,8 +278,27 @@ A clean dark-themed React dashboard designed for quick security reviews and easy
 ![Report](ReportPage.png)
 ![Report](ReportPage(1).png)
 
+---
 
+## Chrome Extension
 
+BlindSpot includes a Chrome Extension for browser-based security scanning.
+
+### Features
+
+- Scan authorized websites directly from Chrome
+- Passive, Light Active, and Full Active scan modes
+- Connects with the BlindSpot backend API
+- Displays scan status and vulnerability results
+- Supports authenticated scanning using cookies/headers
+
+### Setup
+
+1. Open `chrome://extensions/`
+2. Enable **Developer mode**
+3. Click **Load unpacked**
+4. Select the BlindSpot extension folder
+5. Open the extension and start a scan
 
 ---
 
