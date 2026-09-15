@@ -280,7 +280,7 @@ A clean dark-themed React dashboard designed for quick security reviews and easy
 
 ---
 
-## Chrome Extension
+## [Chrome Extension](#chrome-extension)
 
 BlindSpot includes a Chrome Extension for browser-based security scanning.
 
